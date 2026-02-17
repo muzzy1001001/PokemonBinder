@@ -1,0 +1,16 @@
+{
+  "name": "my-pokemon-deck",
+  "version": "1.0.0",
+  "description": "Personal Pokemon collection deck app powered by Pokemon TCG API",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2"
+  }
+}

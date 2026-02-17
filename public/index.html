@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My Pokemon Deck</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="bg-shape bg-shape-top"></div>
+    <div class="bg-shape bg-shape-bottom"></div>
+
+    <header class="hero">
+      <p class="hero-tag">Trainer Collection Tracker</p>
+      <h1>My Pokemon Collection Deck</h1>
+      <p class="hero-sub">
+        Search cards, sort by power or release date, and track which pack each
+        card came from.
+      </p>
+    </header>
+
+    <main class="layout">
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Card Finder</h2>
+          <p>Powered by Pokemon TCG API</p>
+        </div>
+
+        <div class="controls">
+          <label>
+            Search Pokemon
+            <input
+              id="searchInput"
+              type="search"
+              placeholder="Try Pikachu, Charizard, Eevee..."
+            />
+          </label>
+
+          <label>
+            Pack / Set
+            <select id="setFilter">
+              <option value="">All packs</option>
+            </select>
+          </label>
+
+          <label>
+            Sort by
+            <select id="sortSelect">
+              <option value="name_asc">Name A-Z</option>
+              <option value="name_desc">Name Z-A</option>
+              <option value="hp_desc">Highest HP</option>
+              <option value="hp_asc">Lowest HP</option>
+              <option value="newest">Newest Set</option>
+              <option value="oldest">Oldest Set</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="result-bar">
+          <p id="resultMeta">Loading cards...</p>
+          <div class="pager">
+            <button id="prevPage" type="button">Previous</button>
+            <span id="pageInfo">Page 1</span>
+            <button id="nextPage" type="button">Next</button>
+          </div>
+        </div>
+
+        <div id="cardGrid" class="card-grid"></div>
+      </section>
+
+      <section class="panel panel-binder">
+        <div class="panel-heading">
+          <h2>My Binder</h2>
+          <p id="binderStats">0 unique | 0 total cards</p>
+        </div>
+
+        <div class="controls controls-binder">
+          <label>
+            Search binder
+            <input
+              id="binderSearch"
+              type="search"
+              placeholder="Name, set, or notes"
+            />
+          </label>
+
+          <label>
+            Sort binder
+            <select id="binderSort">
+              <option value="updated_desc">Recently Updated</option>
+              <option value="updated_asc">Oldest Updated</option>
+              <option value="name_asc">Name A-Z</option>
+              <option value="name_desc">Name Z-A</option>
+              <option value="qty_desc">Highest Quantity</option>
+              <option value="set_asc">Set Name</option>
+            </select>
+          </label>
+
+          <label>
+            Condition
+            <select id="binderCondition">
+              <option value="">All conditions</option>
+              <option value="Mint">Mint</option>
+              <option value="Near Mint">Near Mint</option>
+              <option value="Lightly Played">Lightly Played</option>
+              <option value="Moderately Played">Moderately Played</option>
+              <option value="Heavily Played">Heavily Played</option>
+              <option value="Damaged">Damaged</option>
+            </select>
+          </label>
+
+          <button id="clearBinder" type="button" class="ghost-btn">
+            Clear Binder
+          </button>
+        </div>
+
+        <div id="binderList" class="binder-list"></div>
+      </section>
+    </main>
+
+    <section class="panel panel-gacha">
+      <div class="panel-heading">
+        <h2>Booster Gacha</h2>
+        <p>Open virtual packs by set and add your pulls to binder.</p>
+      </div>
+
+      <div class="controls controls-gacha">
+        <label>
+          Choose Pack Set
+          <select id="gachaSetSelect"></select>
+        </label>
+
+        <label>
+          Packs to open
+          <select id="gachaPackCount">
+            <option value="1">1 pack</option>
+            <option value="2">2 packs</option>
+            <option value="3">3 packs</option>
+            <option value="5">5 packs</option>
+          </select>
+        </label>
+
+        <button id="openPackBtn" type="button">Open Pack</button>
+        <button id="addPullsBtn" type="button" class="ghost-btn" disabled>
+          Add Pulls to Binder
+        </button>
+      </div>
+
+      <div class="gacha-stage">
+        <button id="gachaPackCard" class="gacha-pack" type="button">
+          <p id="gachaPackSeries" class="gacha-pack-series"></p>
+          <img id="gachaPackLogo" class="gacha-pack-logo" alt="Pack logo" />
+          <p id="gachaPackName" class="gacha-pack-name"></p>
+          <p class="gacha-pack-cta">Tap to rip open</p>
+        </button>
+        <p id="gachaStatus" class="gacha-status">Pick a set, then open a pack.</p>
+      </div>
+
+      <div id="gachaResult" class="gacha-result"></div>
+    </section>
+
+    <template id="emptyStateTemplate">
+      <div class="empty-state">
+        <p>No cards found. Try another search or set.</p>
+      </div>
+    </template>
+
+    <div id="cardModal" class="card-modal" aria-hidden="true">
+      <div class="card-modal-backdrop" data-close-modal></div>
+      <section class="card-float" role="dialog" aria-modal="true" aria-label="Card preview">
+        <div id="modalTiltStage" class="tilt-stage">
+          <div id="modalTiltCard" class="tilt-card">
+            <img
+              id="modalCardImage"
+              src=""
+              alt="Pokemon card preview"
+              draggable="false"
+            />
+          </div>
+        </div>
+        <p class="float-hint">Hold and drag to tilt. Press Esc to close.</p>
+      </section>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
