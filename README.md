@@ -13,6 +13,8 @@ It supports two data providers:
 - Filter cards by pack/set
 - See which pack each card came from
 - Open interactive virtual booster gacha packs by set
+- Draw a cut line to open booster wrappers, then reveal cards back-first and flip front
+- Uses `cardback.jpg` for card backs and PokeSymbols booster pack artwork when available
 - Track your personal virtual binder with quantity, condition, and notes
 - Persist binder data in browser localStorage
 

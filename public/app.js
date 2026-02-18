@@ -31,7 +31,22 @@ const state = {
     selectedSetId: "",
     packCount: 1,
     opening: false,
-    lastPulls: []
+    revealing: false,
+    lastPulls: [],
+    lastPackCount: 0,
+    revealQueue: [],
+    revealIndex: 0,
+    revealSetName: "",
+    revealStage: "front",
+    ripActive: false,
+    ripDone: false,
+    ripPointerId: null,
+    ripMinX: 0,
+    ripMaxX: 0,
+    ripPoints: [],
+    ripStartX: 0,
+    ripStartY: 0,
+    ripDistance: 0
   }
 };
 
@@ -45,6 +60,8 @@ const el = {
   nextPage: document.getElementById("nextPage"),
   cardGrid: document.getElementById("cardGrid"),
   binderStats: document.getElementById("binderStats"),
+  workspaceTitle: document.getElementById("workspaceTitle"),
+  workspaceSubtitle: document.getElementById("workspaceSubtitle"),
   binderSearch: document.getElementById("binderSearch"),
   binderSort: document.getElementById("binderSort"),
   binderCondition: document.getElementById("binderCondition"),
@@ -52,24 +69,38 @@ const el = {
   binderList: document.getElementById("binderList"),
   gachaSetSelect: document.getElementById("gachaSetSelect"),
   gachaPackCount: document.getElementById("gachaPackCount"),
-  openPackBtn: document.getElementById("openPackBtn"),
   addPullsBtn: document.getElementById("addPullsBtn"),
   gachaPackCard: document.getElementById("gachaPackCard"),
+  gachaCutLayer: document.getElementById("gachaCutLayer"),
+  gachaCutSvg: document.getElementById("gachaCutSvg"),
+  gachaCutPath: document.getElementById("gachaCutPath"),
   gachaPackSeries: document.getElementById("gachaPackSeries"),
+  gachaPackArt: document.getElementById("gachaPackArt"),
   gachaPackLogo: document.getElementById("gachaPackLogo"),
   gachaPackName: document.getElementById("gachaPackName"),
   gachaStatus: document.getElementById("gachaStatus"),
   gachaResult: document.getElementById("gachaResult"),
   emptyStateTemplate: document.getElementById("emptyStateTemplate"),
   cardModal: document.getElementById("cardModal"),
-  modalCardImage: document.getElementById("modalCardImage"),
+  modalFlipCard: document.getElementById("modalFlipCard"),
+  modalCardFrontImage: document.getElementById("modalCardFrontImage"),
+  modalCardBackImage: document.getElementById("modalCardBackImage"),
+  modalHint: document.getElementById("modalHint"),
   modalTiltStage: document.getElementById("modalTiltStage"),
-  modalTiltCard: document.getElementById("modalTiltCard")
+  modalTiltCard: document.getElementById("modalTiltCard"),
+  modalRevealInfo: document.getElementById("modalRevealInfo"),
+  modalRevealCounter: document.getElementById("modalRevealCounter"),
+  modalRevealRarity: document.getElementById("modalRevealRarity")
 };
+
+const sidebarLinks = Array.from(document.querySelectorAll(".sidebar-link"));
 
 const tiltState = {
   isDragging: false,
-  pointerId: null
+  pointerId: null,
+  startX: 0,
+  startY: 0,
+  dragDistance: 0
 };
 
 function toPositiveInt(value, fallback = 1) {
@@ -164,11 +195,6 @@ function getBinderEntry(cardId) {
   return state.binder.find((entry) => entry.id === cardId);
 }
 
-function getBinderQuantity(cardId) {
-  const entry = getBinderEntry(cardId);
-  return entry ? toPositiveInt(entry.ownedQty, 1) : 0;
-}
-
 function formatPack(card) {
   const set = card.set || {};
   const series = set.series ? ` (${set.series})` : "";
@@ -186,11 +212,93 @@ function colorFromSetId(setId, rotate = 0) {
   return `hsl(${(Math.abs(hash) + rotate) % 360} 86% 54%)`;
 }
 
+function rarityAccent(rarity) {
+  const label = String(rarity || "").toLowerCase();
+
+  if (label.includes("ultra") || label.includes("secret") || label.includes("rainbow")) {
+    return {
+      background: "linear-gradient(140deg, #7c3aed, #ec4899)",
+      border: "rgba(255, 255, 255, 0.6)"
+    };
+  }
+
+  if (label.includes("rare") || label.includes("holo")) {
+    return {
+      background: "linear-gradient(140deg, #f59e0b, #ef4444)",
+      border: "rgba(255, 255, 255, 0.55)"
+    };
+  }
+
+  if (label.includes("uncommon")) {
+    return {
+      background: "linear-gradient(140deg, #16a34a, #22c55e)",
+      border: "rgba(255, 255, 255, 0.45)"
+    };
+  }
+
+  return {
+    background: "linear-gradient(140deg, #334155, #475569)",
+    border: "rgba(255, 255, 255, 0.4)"
+  };
+}
+
+function setActiveView(viewId, title, subtitle, activeLink = null) {
+  const views = document.querySelectorAll(".view");
+  for (const view of views) {
+    view.classList.toggle("is-active", view.id === `view-${viewId}`);
+  }
+
+  if (activeLink) {
+    for (const link of sidebarLinks) {
+      link.classList.toggle("is-active", link === activeLink);
+    }
+  }
+
+  if (title) {
+    el.workspaceTitle.textContent = title;
+  }
+
+  if (subtitle) {
+    el.workspaceSubtitle.textContent = subtitle;
+  }
+
+  if (viewId === "finder") {
+    window.requestAnimationFrame(() => {
+      el.searchInput.focus();
+    });
+  }
+}
+
 function resetTilt() {
   el.modalTiltCard.style.transform = "rotateX(0deg) rotateY(0deg) scale(1)";
   el.modalTiltCard.style.setProperty("--shine-x", "50%");
   el.modalTiltCard.style.setProperty("--shine-y", "50%");
   el.modalTiltCard.style.setProperty("--shine-strength", "0.24");
+}
+
+function setModalRevealMode(enabled) {
+  el.cardModal.classList.toggle("is-reveal", enabled);
+  el.modalRevealInfo.hidden = !enabled;
+  el.modalHint.hidden = enabled;
+
+  if (!enabled) {
+    el.modalRevealRarity.style.background = "";
+    el.modalRevealRarity.style.borderColor = "";
+  }
+}
+
+function spinModalCard() {
+  el.modalTiltCard.classList.remove("is-spinning");
+  void el.modalTiltCard.offsetWidth;
+  el.modalTiltCard.classList.add("is-spinning");
+}
+
+function setModalCardFace(card, showBackFirst = false) {
+  el.modalCardFrontImage.src = card.images?.large || card.images?.small || "";
+  el.modalCardFrontImage.alt = `${card.name} card preview`;
+  el.modalCardBackImage.src = "/cardback.jpg";
+  el.modalCardBackImage.alt = "Pokemon card back";
+  el.modalFlipCard.classList.toggle("is-revealed", !showBackFirst);
 }
 
 function updateTilt(clientX, clientY) {
@@ -221,6 +329,9 @@ function startTilt(event) {
   event.preventDefault();
   tiltState.isDragging = true;
   tiltState.pointerId = event.pointerId;
+  tiltState.startX = event.clientX;
+  tiltState.startY = event.clientY;
+  tiltState.dragDistance = 0;
 
   el.modalTiltStage.classList.add("is-grabbing");
   el.modalTiltCard.classList.add("is-dragging");
@@ -240,6 +351,13 @@ function moveTilt(event) {
   if (tiltState.pointerId !== null && event.pointerId !== tiltState.pointerId) {
     return;
   }
+
+  const deltaX = event.clientX - tiltState.startX;
+  const deltaY = event.clientY - tiltState.startY;
+  tiltState.dragDistance = Math.max(
+    tiltState.dragDistance,
+    Math.hypot(deltaX, deltaY)
+  );
 
   updateTilt(event.clientX, event.clientY);
 }
@@ -270,12 +388,22 @@ function endTilt(event) {
   tiltState.pointerId = null;
   el.modalTiltStage.classList.remove("is-grabbing");
   el.modalTiltCard.classList.remove("is-dragging");
+
+  if (
+    state.gacha.revealing &&
+    state.gacha.revealStage === "back" &&
+    tiltState.dragDistance < 8
+  ) {
+    revealCurrentCardFront();
+  }
+
+  tiltState.dragDistance = 0;
 }
 
 function openCardModal(card) {
-  el.modalCardImage.src = card.images?.large || card.images?.small || "";
-  el.modalCardImage.alt = `${card.name} card enlarged`;
+  setModalCardFace(card, false);
 
+  setModalRevealMode(false);
   el.cardModal.classList.add("is-open");
   el.cardModal.setAttribute("aria-hidden", "false");
   document.body.classList.add("modal-open");
@@ -287,10 +415,16 @@ function closeCardModal() {
     return;
   }
 
+  if (state.gacha.revealing) {
+    return;
+  }
+
   endTilt();
   el.cardModal.classList.remove("is-open");
   el.cardModal.setAttribute("aria-hidden", "true");
   document.body.classList.remove("modal-open");
+  setModalRevealMode(false);
+  el.modalFlipCard.classList.add("is-revealed");
   resetTilt();
 }
 
@@ -386,13 +520,6 @@ function upsertBinderCard(card, quantity = 1) {
   });
 }
 
-function addCardToBinder(card) {
-  upsertBinderCard(card, 1);
-  saveBinder();
-  renderCards();
-  renderBinder();
-}
-
 function createCardElement(card) {
   const article = document.createElement("article");
   article.className = "card-item";
@@ -446,19 +573,6 @@ function createCardElement(card) {
   packDetails.textContent = `From: ${formatPack(card)}`;
   article.appendChild(packDetails);
 
-  const currentQty = getBinderQuantity(card.id);
-  const addBtn = document.createElement("button");
-  addBtn.type = "button";
-  addBtn.textContent =
-    currentQty > 0
-      ? `Add to Binder (+1, have ${currentQty})`
-      : "Add to Binder";
-  addBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    addCardToBinder(card);
-  });
-  article.appendChild(addBtn);
-
   return article;
 }
 
@@ -494,7 +608,6 @@ function renderGachaSetOptions() {
     option.textContent = "No sets available";
     el.gachaSetSelect.appendChild(option);
     state.gacha.selectedSetId = "";
-    el.openPackBtn.disabled = true;
     el.gachaPackCard.disabled = true;
     return;
   }
@@ -514,6 +627,7 @@ function renderGachaSetOptions() {
   }
 
   el.gachaSetSelect.value = state.gacha.selectedSetId;
+  resetPackRipState();
   updateGachaPackVisual();
 }
 
@@ -523,16 +637,44 @@ function getSelectedGachaPack() {
   );
 }
 
+function syncCutSvgToPack() {
+  const rect = el.gachaPackCard.getBoundingClientRect();
+  const width = Math.max(Math.round(rect.width), 1);
+  const height = Math.max(Math.round(rect.height), 1);
+  el.gachaCutSvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+}
+
+function updatePackAspectRatioFromImage() {
+  const imageWidth = el.gachaPackArt.naturalWidth;
+  const imageHeight = el.gachaPackArt.naturalHeight;
+
+  if (!imageWidth || !imageHeight) {
+    el.gachaPackCard.style.setProperty("--pack-aspect", "0.73");
+    return;
+  }
+
+  const ratio = imageWidth / imageHeight;
+  const clampedRatio = Math.min(Math.max(ratio, 0.55), 0.9);
+  el.gachaPackCard.style.setProperty("--pack-aspect", clampedRatio.toFixed(4));
+  syncCutSvgToPack();
+}
+
 function updateGachaPackVisual() {
   const selectedPack = getSelectedGachaPack();
+  const isBusy = state.gacha.opening || state.gacha.revealing;
+  el.gachaSetSelect.disabled = isBusy;
+  el.gachaPackCount.disabled = isBusy;
   if (!selectedPack) {
     el.gachaPackSeries.textContent = "No Set";
     el.gachaPackName.textContent = "No pack selected";
+    el.gachaPackArt.style.display = "none";
     el.gachaPackLogo.style.display = "none";
     el.gachaPackCard.style.setProperty("--pack-from", "#4f46e5");
     el.gachaPackCard.style.setProperty("--pack-to", "#ef4444");
-    el.openPackBtn.disabled = true;
+    el.gachaPackCard.style.setProperty("--pack-aspect", "0.73");
+    el.gachaPackCard.classList.remove("has-pack-art");
     el.gachaPackCard.disabled = true;
+    syncCutSvgToPack();
     return;
   }
 
@@ -544,7 +686,24 @@ function updateGachaPackVisual() {
   el.gachaPackSeries.textContent = selectedPack.series || "Pokemon TCG";
   el.gachaPackName.textContent = selectedPack.name;
 
-  if (selectedPack.visual?.logo) {
+  if (selectedPack.visual?.boosterArt) {
+    if (el.gachaPackArt.src !== selectedPack.visual.boosterArt) {
+      el.gachaPackArt.src = selectedPack.visual.boosterArt;
+    }
+    el.gachaPackArt.style.display = "block";
+    el.gachaPackCard.classList.add("has-pack-art");
+    if (el.gachaPackArt.complete) {
+      updatePackAspectRatioFromImage();
+    }
+  } else {
+    el.gachaPackArt.removeAttribute("src");
+    el.gachaPackArt.style.display = "none";
+    el.gachaPackCard.classList.remove("has-pack-art");
+    el.gachaPackCard.style.setProperty("--pack-aspect", "0.73");
+    syncCutSvgToPack();
+  }
+
+  if (!selectedPack.visual?.boosterArt && selectedPack.visual?.logo) {
     el.gachaPackLogo.src = selectedPack.visual.logo;
     el.gachaPackLogo.style.display = "block";
   } else {
@@ -553,8 +712,163 @@ function updateGachaPackVisual() {
   }
 
   const hasSet = Boolean(state.gacha.selectedSetId);
-  el.openPackBtn.disabled = !hasSet;
-  el.gachaPackCard.disabled = !hasSet;
+  el.gachaPackCard.disabled = !hasSet || isBusy;
+
+  if (!state.gacha.ripDone && !isBusy) {
+    el.gachaStatus.textContent = "Draw a cut line across the wrapper to open.";
+  }
+}
+
+function resetPackRipState() {
+  state.gacha.ripActive = false;
+  state.gacha.ripDone = false;
+  state.gacha.ripPointerId = null;
+  state.gacha.ripDistance = 0;
+  state.gacha.ripMinX = 0;
+  state.gacha.ripMaxX = 0;
+  state.gacha.ripPoints = [];
+  state.gacha.ripStartX = 0;
+  state.gacha.ripStartY = 0;
+
+  el.gachaPackCard.classList.remove("is-cutting", "is-cut", "is-ripped");
+  el.gachaCutPath.setAttribute("d", "");
+}
+
+function getLocalPackPoint(event) {
+  const rect = el.gachaPackCard.getBoundingClientRect();
+  return {
+    x: Math.min(Math.max(event.clientX - rect.left, 0), rect.width),
+    y: Math.min(Math.max(event.clientY - rect.top, 0), rect.height),
+    width: rect.width,
+    height: rect.height
+  };
+}
+
+function renderCutPath() {
+  if (state.gacha.ripPoints.length < 2) {
+    el.gachaCutPath.setAttribute("d", "");
+    return;
+  }
+
+  let pathData = "";
+  state.gacha.ripPoints.forEach((point, index) => {
+    pathData += `${index === 0 ? "M" : "L"}${point.x.toFixed(1)} ${point.y.toFixed(1)} `;
+  });
+
+  el.gachaCutPath.setAttribute("d", pathData.trim());
+}
+
+function beginPackRip(event) {
+  if (
+    state.gacha.opening ||
+    state.gacha.revealing ||
+    state.gacha.ripDone ||
+    !state.gacha.selectedSetId
+  ) {
+    return;
+  }
+
+  if (event.button !== undefined && event.button !== 0) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  syncCutSvgToPack();
+  const point = getLocalPackPoint(event);
+
+  state.gacha.ripActive = true;
+  state.gacha.ripPointerId = event.pointerId;
+  state.gacha.ripStartX = point.x;
+  state.gacha.ripStartY = point.y;
+  state.gacha.ripMinX = point.x;
+  state.gacha.ripMaxX = point.x;
+  state.gacha.ripPoints = [point];
+  state.gacha.ripDistance = 0;
+
+  el.gachaPackCard.classList.add("is-cutting");
+  if (el.gachaCutLayer.setPointerCapture) {
+    el.gachaCutLayer.setPointerCapture(event.pointerId);
+  }
+
+  renderCutPath();
+}
+
+function movePackRip(event) {
+  if (!state.gacha.ripActive) {
+    return;
+  }
+
+  if (state.gacha.ripPointerId !== null && event.pointerId !== state.gacha.ripPointerId) {
+    return;
+  }
+
+  const point = getLocalPackPoint(event);
+  const lastPoint = state.gacha.ripPoints[state.gacha.ripPoints.length - 1];
+
+  const deltaX = point.x - lastPoint.x;
+  const deltaY = point.y - lastPoint.y;
+  const segmentLength = Math.hypot(deltaX, deltaY);
+
+  if (segmentLength < 1.6) {
+    return;
+  }
+
+  state.gacha.ripPoints.push(point);
+  state.gacha.ripDistance += segmentLength;
+  state.gacha.ripMinX = Math.min(state.gacha.ripMinX, point.x);
+  state.gacha.ripMaxX = Math.max(state.gacha.ripMaxX, point.x);
+  renderCutPath();
+}
+
+function completePackRip() {
+  state.gacha.ripActive = false;
+  state.gacha.ripDone = true;
+  state.gacha.ripPointerId = null;
+
+  el.gachaPackCard.classList.remove("is-cutting");
+  el.gachaPackCard.classList.add("is-cut", "is-ripped");
+  el.gachaStatus.textContent = "Cut complete. Opening pack...";
+
+  window.setTimeout(() => {
+    openGachaPack();
+  }, 360);
+}
+
+function endPackRip(event) {
+  if (!state.gacha.ripActive) {
+    return;
+  }
+
+  if (
+    el.gachaCutLayer.releasePointerCapture &&
+    event &&
+    event.pointerId !== undefined &&
+    el.gachaCutLayer.hasPointerCapture(event.pointerId)
+  ) {
+    el.gachaCutLayer.releasePointerCapture(event.pointerId);
+  }
+
+  const packWidth = el.gachaPackCard.getBoundingClientRect().width;
+  const horizontalSpan = Math.max(state.gacha.ripMaxX - state.gacha.ripMinX, 0);
+  const crossedThreshold =
+    state.gacha.ripDistance > packWidth * 0.55 && horizontalSpan > packWidth * 0.38;
+
+  if (crossedThreshold) {
+    completePackRip();
+    return;
+  }
+
+  state.gacha.ripActive = false;
+  state.gacha.ripPointerId = null;
+  state.gacha.ripDistance = 0;
+  state.gacha.ripMinX = 0;
+  state.gacha.ripMaxX = 0;
+  state.gacha.ripPoints = [];
+  el.gachaPackCard.classList.remove("is-cutting");
+  renderCutPath();
+  el.gachaStatus.textContent = "Draw a longer cut line across the wrapper.";
 }
 
 function createGachaCardElement(card) {
@@ -581,6 +895,7 @@ function createGachaCardElement(card) {
 
 function renderGachaPulls(response) {
   state.gacha.lastPulls = response.pulls || [];
+  state.gacha.lastPackCount = toPositiveInt(response.packCount, 1);
   el.gachaResult.innerHTML = "";
 
   const allCards = [];
@@ -606,20 +921,162 @@ function renderGachaPulls(response) {
 
   el.addPullsBtn.disabled = !allCards.length;
   if (allCards.length) {
-    el.gachaStatus.textContent = `Pulled ${allCards.length} cards from ${response.packCount} pack(s).`;
+    el.gachaStatus.textContent = `Pulled ${allCards.length} cards from ${state.gacha.lastPackCount} pack(s).`;
   }
 }
 
+function buildGachaRevealQueue(pulls) {
+  const queue = [];
+  for (const packPull of pulls) {
+    const cards = packPull.cards || [];
+    const totalInPack = cards.length;
+    for (let index = 0; index < cards.length; index += 1) {
+      queue.push({
+        card: cards[index],
+        packNumber: packPull.packNumber,
+        slotIndex: index + 1,
+        totalInPack
+      });
+    }
+  }
+
+  return queue;
+}
+
+function showRevealCard() {
+  const item = state.gacha.revealQueue[state.gacha.revealIndex];
+  if (!item) {
+    return;
+  }
+
+  const totalCards = state.gacha.revealQueue.length;
+  state.gacha.revealStage = "back";
+
+  setModalCardFace(item.card, true);
+  spinModalCard();
+
+  el.modalRevealCounter.textContent = `Pack ${item.packNumber} • ${item.slotIndex}/${item.totalInPack}`;
+  el.modalRevealRarity.textContent = "Hidden";
+  el.modalRevealRarity.style.background = "linear-gradient(140deg, #334155, #475569)";
+  el.modalRevealRarity.style.borderColor = "rgba(255, 255, 255, 0.4)";
+
+  setModalRevealMode(true);
+  el.cardModal.classList.add("is-open");
+  el.cardModal.setAttribute("aria-hidden", "false");
+  document.body.classList.add("modal-open");
+  resetTilt();
+}
+
+function revealCurrentCardFront() {
+  if (!state.gacha.revealing || state.gacha.revealStage !== "back") {
+    return;
+  }
+
+  const item = state.gacha.revealQueue[state.gacha.revealIndex];
+  if (!item) {
+    return;
+  }
+
+  const totalCards = state.gacha.revealQueue.length;
+  const isLast = state.gacha.revealIndex === totalCards - 1;
+
+  state.gacha.revealStage = "front";
+  el.modalFlipCard.classList.add("is-revealed");
+
+  const accent = rarityAccent(item.card.rarity);
+  el.modalRevealRarity.textContent = item.card.rarity || "Unknown rarity";
+  el.modalRevealRarity.style.background = accent.background;
+  el.modalRevealRarity.style.borderColor = accent.border;
+
+  if (isLast) {
+    el.gachaStatus.textContent = "Final card revealed. Tap outside the card to finish.";
+  } else {
+    el.gachaStatus.textContent = "Card revealed. Tap outside the card for next.";
+  }
+}
+
+function finishGachaReveal() {
+  state.gacha.revealing = false;
+  state.gacha.revealQueue = [];
+  state.gacha.revealIndex = 0;
+  state.gacha.revealStage = "front";
+
+  endTilt();
+  el.cardModal.classList.remove("is-open");
+  el.cardModal.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("modal-open");
+  setModalRevealMode(false);
+  resetTilt();
+
+  renderGachaPulls({
+    pulls: state.gacha.lastPulls,
+    packCount: state.gacha.lastPackCount,
+    set: { name: state.gacha.revealSetName }
+  });
+
+  resetPackRipState();
+  updateGachaPackVisual();
+}
+
+function advanceGachaReveal() {
+  if (!state.gacha.revealing) {
+    return;
+  }
+
+  if (state.gacha.revealStage === "back") {
+    revealCurrentCardFront();
+    return;
+  }
+
+  if (state.gacha.revealIndex >= state.gacha.revealQueue.length - 1) {
+    finishGachaReveal();
+    return;
+  }
+
+  state.gacha.revealIndex += 1;
+  showRevealCard();
+}
+
+function startGachaReveal(payload) {
+  state.gacha.lastPulls = payload.pulls || [];
+  state.gacha.lastPackCount = toPositiveInt(payload.packCount, 1);
+  state.gacha.revealSetName = payload.set?.name || "Set";
+  state.gacha.revealQueue = buildGachaRevealQueue(state.gacha.lastPulls);
+  state.gacha.revealIndex = 0;
+  state.gacha.revealing = state.gacha.revealQueue.length > 0;
+  el.addPullsBtn.disabled = true;
+  el.gachaResult.innerHTML = "";
+
+  if (!state.gacha.revealing) {
+    el.gachaStatus.textContent = "No cards pulled from this pack.";
+    resetPackRipState();
+    updateGachaPackVisual();
+    return;
+  }
+
+  el.gachaStatus.textContent =
+    "Tap card to reveal front, then tap outside card for next.";
+  showRevealCard();
+  updateGachaPackVisual();
+}
+
 async function openGachaPack() {
-  if (state.gacha.opening || !state.gacha.selectedSetId) {
+  if (
+    state.gacha.opening ||
+    state.gacha.revealing ||
+    !state.gacha.selectedSetId ||
+    !state.gacha.ripDone
+  ) {
+    if (!state.gacha.ripDone && !state.gacha.opening && !state.gacha.revealing) {
+      el.gachaStatus.textContent = "Draw a cut line first to open this pack.";
+    }
     return;
   }
 
   state.gacha.opening = true;
-  el.openPackBtn.disabled = true;
-  el.gachaPackCard.disabled = true;
-  el.gachaPackCard.classList.add("is-opening");
-  el.gachaStatus.textContent = "Ripping pack...";
+  updateGachaPackVisual();
+  el.gachaStatus.textContent = "Wrapper opened. Dealing cards...";
+  el.addPullsBtn.disabled = true;
 
   try {
     const response = await fetch("/api/gacha/open", {
@@ -645,19 +1102,22 @@ async function openGachaPack() {
     }
 
     const payload = await response.json();
-    renderGachaPulls(payload);
+    await new Promise((resolve) => window.setTimeout(resolve, 420));
+    startGachaReveal(payload);
   } catch (error) {
     el.gachaStatus.textContent = `Failed to open pack. ${error.message}`;
+    resetPackRipState();
   } finally {
-    window.setTimeout(() => {
-      el.gachaPackCard.classList.remove("is-opening");
-      state.gacha.opening = false;
-      updateGachaPackVisual();
-    }, 940);
+    state.gacha.opening = false;
+    updateGachaPackVisual();
   }
 }
 
 function addGachaPullsToBinder() {
+  if (state.gacha.revealing) {
+    return;
+  }
+
   const pulledCards = [];
 
   for (const packPull of state.gacha.lastPulls) {
@@ -928,13 +1388,35 @@ async function refreshCards() {
 function attachEvents() {
   let searchTimer = null;
 
+  for (const link of sidebarLinks) {
+    link.addEventListener("click", () => {
+      const targetView = link.dataset.view;
+      const title = link.dataset.title;
+      const subtitle = link.dataset.subtitle;
+      setActiveView(targetView, title, subtitle, link);
+    });
+  }
+
   el.cardModal.addEventListener("click", (event) => {
     if (event.target.hasAttribute("data-close-modal")) {
+      if (state.gacha.revealing) {
+        if (state.gacha.revealStage === "front") {
+          advanceGachaReveal();
+        }
+        return;
+      }
+
       closeCardModal();
     }
   });
 
   document.addEventListener("keydown", (event) => {
+    if (state.gacha.revealing && (event.key === "Enter" || event.key === " ")) {
+      event.preventDefault();
+      advanceGachaReveal();
+      return;
+    }
+
     if (event.key === "Escape") {
       closeCardModal();
     }
@@ -1009,6 +1491,7 @@ function attachEvents() {
 
   el.gachaSetSelect.addEventListener("change", (event) => {
     state.gacha.selectedSetId = event.target.value;
+    resetPackRipState();
     updateGachaPackVisual();
   });
 
@@ -1016,12 +1499,28 @@ function attachEvents() {
     state.gacha.packCount = toPositiveInt(event.target.value, 1);
   });
 
-  el.openPackBtn.addEventListener("click", () => {
-    openGachaPack();
+  el.gachaCutLayer.addEventListener("pointerdown", beginPackRip);
+  el.gachaCutLayer.addEventListener("pointermove", movePackRip);
+  el.gachaCutLayer.addEventListener("pointerup", endPackRip);
+  el.gachaCutLayer.addEventListener("pointercancel", endPackRip);
+  el.gachaCutLayer.addEventListener("dragstart", (event) => {
+    event.preventDefault();
+  });
+  el.gachaCutLayer.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  el.gachaPackArt.addEventListener("load", () => {
+    updatePackAspectRatioFromImage();
+  });
+  window.addEventListener("resize", () => {
+    syncCutSvgToPack();
   });
 
   el.gachaPackCard.addEventListener("click", () => {
-    openGachaPack();
+    if (!state.gacha.ripDone && !state.gacha.opening && !state.gacha.revealing) {
+      el.gachaStatus.textContent = "Draw a cut line across the wrapper to open.";
+    }
   });
 
   el.addPullsBtn.addEventListener("click", () => {
@@ -1048,6 +1547,19 @@ async function initialize() {
   state.binder = loadBinder();
   state.gacha.packCount = toPositiveInt(el.gachaPackCount.value, 1);
   attachEvents();
+
+  const defaultLink =
+    sidebarLinks.find((link) => link.classList.contains("is-active")) ||
+    sidebarLinks[0] ||
+    null;
+  if (defaultLink) {
+    setActiveView(
+      defaultLink.dataset.view,
+      defaultLink.dataset.title,
+      defaultLink.dataset.subtitle,
+      defaultLink
+    );
+  }
 
   try {
     await fetchSets();

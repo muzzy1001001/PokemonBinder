@@ -31,6 +31,8 @@ const API_SORT_MAP = {
 
 const GACHA_CARDS_PER_PACK = 10;
 const GACHA_MAX_PACKS = 8;
+const BOOSTER_ART_PAGE_URL = "https://pokesymbols.com/tcg/booster-pack-art";
+const BOOSTER_ART_ORIGIN = "https://pokesymbols.com";
 
 const tcgClient = axios.create({
   baseURL: POKEMON_TCG_BASE_URL,
@@ -45,6 +47,12 @@ const localDataCache = {
   loadingPromise: null,
   sets: [],
   cards: []
+};
+
+const boosterArtCache = {
+  loaded: false,
+  loadingPromise: null,
+  bySetNameKey: new Map()
 };
 
 app.use(express.json());
@@ -197,6 +205,89 @@ function sortLocalCards(cards, sort) {
   return sorted;
 }
 
+function normalizeSetNameKey(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+async function ensureBoosterArtLoaded() {
+  if (boosterArtCache.loaded) {
+    return;
+  }
+
+  if (boosterArtCache.loadingPromise) {
+    await boosterArtCache.loadingPromise;
+    return;
+  }
+
+  boosterArtCache.loadingPromise = (async () => {
+    try {
+      const response = await axios.get(BOOSTER_ART_PAGE_URL, {
+        timeout: 15000
+      });
+
+      const html = String(response.data || "");
+      const entries = [];
+      const escapedPattern =
+        /\\"imageSrc\\":\\"(\/images\/tcg\/sets\/booster-pack-art\/[^\\"]+)\\",\\"name\\":\\"([^\\"]+)\\"/g;
+      const plainPattern =
+        /"imageSrc":"(\/images\/tcg\/sets\/booster-pack-art\/[^"]+)","name":"([^"]+)"/g;
+
+      for (const pattern of [escapedPattern, plainPattern]) {
+        let match = pattern.exec(html);
+        while (match) {
+          entries.push({
+            imageSrc: match[1],
+            name: match[2]
+          });
+          match = pattern.exec(html);
+        }
+      }
+
+      const map = new Map();
+
+      for (const entry of entries) {
+        if (!entry?.name || !entry?.imageSrc) {
+          continue;
+        }
+
+        const key = normalizeSetNameKey(entry.name);
+        if (!key) {
+          continue;
+        }
+
+        const imageUrl = new URL(entry.imageSrc, BOOSTER_ART_ORIGIN).toString();
+        if (!map.has(key)) {
+          map.set(key, new Set());
+        }
+        map.get(key).add(imageUrl);
+      }
+
+      boosterArtCache.bySetNameKey = new Map(
+        [...map.entries()].map(([key, value]) => [key, [...value]])
+      );
+    } catch (_error) {
+      boosterArtCache.bySetNameKey = new Map();
+    }
+
+    boosterArtCache.loaded = true;
+    boosterArtCache.loadingPromise = null;
+  })();
+
+  await boosterArtCache.loadingPromise;
+}
+
+function getBoosterArtForSetName(setName) {
+  const key = normalizeSetNameKey(setName);
+  if (!key || !boosterArtCache.bySetNameKey.size) {
+    return [];
+  }
+
+  return boosterArtCache.bySetNameKey.get(key) || [];
+}
+
 function rarityLabel(card) {
   return normalizeText(card?.rarity);
 }
@@ -297,6 +388,39 @@ function weightedRandomCard(remainingCards, weightFn) {
   return remainingCards.splice(weighted[weighted.length - 1].index, 1)[0];
 }
 
+function weightedTakeRandomWhere(remainingCards, predicate, weightFn) {
+  const weighted = [];
+  let totalWeight = 0;
+
+  for (let index = 0; index < remainingCards.length; index += 1) {
+    const card = remainingCards[index];
+    if (!predicate(card)) {
+      continue;
+    }
+
+    const weight = Math.max(weightFn(card), 0);
+    if (weight <= 0) {
+      continue;
+    }
+
+    totalWeight += weight;
+    weighted.push({ index, cumulativeWeight: totalWeight });
+  }
+
+  if (!weighted.length || totalWeight <= 0) {
+    return null;
+  }
+
+  const roll = Math.random() * totalWeight;
+  for (const entry of weighted) {
+    if (roll <= entry.cumulativeWeight) {
+      return remainingCards.splice(entry.index, 1)[0];
+    }
+  }
+
+  return remainingCards.splice(weighted[weighted.length - 1].index, 1)[0];
+}
+
 function normalizeCardForClient(card) {
   return {
     id: card.id,
@@ -336,27 +460,70 @@ function buildPackPulls(setCards) {
   }
 
   pickOrFallback(() =>
-    takeRandomWhere(remainingCards, (card) => isRarePlus(card))
-  );
-
-  pickOrFallback(() =>
-    weightedRandomCard(remainingCards, (card) => {
+    weightedTakeRandomWhere(
+      remainingCards,
+      (card) => {
+        const tier = rarityTier(card);
+        return tier === "uncommon" || tier === "rare" || tier === "ultra";
+      },
+      (card) => {
       const tier = rarityTier(card);
-      if (tier === "ultra") {
-        return 1.75;
+      const label = rarityLabel(card);
+
+      if (tier === "rare" && label.includes("holo")) {
+        return 1.9;
       }
 
       if (tier === "rare") {
-        return 1.35;
+        return 1.45;
       }
 
       if (tier === "uncommon") {
-        return 1.15;
+        return 1.25;
       }
 
-      return 1;
+      if (tier === "ultra") {
+        return 0.25;
+      }
+
+      if (tier === "other") {
+        return 0.7;
+      }
+
+      return 0.45;
+      }
+    )
+  );
+
+  if (pulledCards.length < 9) {
+    pickOrFallback(() => weightedRandomCard(remainingCards, () => 1));
+  }
+
+  pickOrFallback(() =>
+    takeRandomWhere(remainingCards, (card) => {
+      const tier = rarityTier(card);
+      return tier === "rare" || tier === "ultra" || isRarePlus(card);
     })
   );
+
+  if (pulledCards.length >= 2) {
+    const secondToLastIndex = pulledCards.length - 2;
+    const lastIndex = pulledCards.length - 1;
+    const secondToLastCard = pulledCards[secondToLastIndex];
+    const lastCard = pulledCards[lastIndex];
+
+    const secondTier = rarityTier(secondToLastCard);
+    const lastTier = rarityTier(lastCard);
+
+    if (
+      secondTier === "ultra" &&
+      lastTier !== "ultra" &&
+      lastTier !== "rare"
+    ) {
+      pulledCards[secondToLastIndex] = lastCard;
+      pulledCards[lastIndex] = secondToLastCard;
+    }
+  }
 
   while (
     pulledCards.length < GACHA_CARDS_PER_PACK &&
@@ -377,12 +544,15 @@ function packVisualFromSet(set) {
 
   const hue = Math.abs(hash);
   const hue2 = (hue + 52) % 360;
+  const boosterArts = getBoosterArtForSetName(set?.name);
 
   return {
     logo: set?.images?.logo || "",
     symbol: set?.images?.symbol || "",
     gradientFrom: `hsl(${hue} 85% 55%)`,
-    gradientTo: `hsl(${hue2} 88% 48%)`
+    gradientTo: `hsl(${hue2} 88% 48%)`,
+    boosterArt: boosterArts[0] || "",
+    boosterArts
   };
 }
 
@@ -578,6 +748,8 @@ app.get("/api/gacha/packs", async (_req, res) => {
   const source = getActiveSource();
 
   try {
+    await ensureBoosterArtLoaded();
+
     let sets = [];
 
     if (source === "github") {
@@ -626,6 +798,8 @@ app.post("/api/gacha/open", async (req, res) => {
   }
 
   try {
+    await ensureBoosterArtLoaded();
+
     const set =
       source === "github"
         ? await getSetByIdLocal(setId)
