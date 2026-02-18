@@ -175,55 +175,84 @@
           <section class="panel panel-gacha">
             <div class="panel-heading">
               <h2>Booster Gacha</h2>
-              <p>Open virtual packs by set and add your pulls to binder.</p>
+              <p>Open virtual packs by set. Click any pack tile to inspect and cut it open.</p>
             </div>
 
             <div class="controls controls-gacha">
-              <label>
-                Choose Pack Set
-                <select id="gachaSetSelect"></select>
-              </label>
-
-              <label>
-                Packs to open
-                <select id="gachaPackCount">
-                  <option value="1">1 pack</option>
-                  <option value="2">2 packs</option>
-                  <option value="3">3 packs</option>
-                  <option value="5">5 packs</option>
-                </select>
-              </label>
-
-              <button id="addPullsBtn" type="button" class="ghost-btn" disabled>
-                Add Pulls to Binder
-              </button>
-            </div>
-
-            <div class="gacha-stage">
-              <button id="gachaPackCard" class="gacha-pack" type="button">
-                <div class="gacha-pack-visual" aria-hidden="true">
-                  <img id="gachaPackArt" class="gacha-pack-art" alt="Booster pack art" />
-                  <img id="gachaPackLogo" class="gacha-pack-logo" alt="Pack logo" />
-                </div>
-
-                <div id="gachaCutLayer" class="gacha-cut-layer">
-                  <svg id="gachaCutSvg" preserveAspectRatio="none">
-                    <path id="gachaCutGuideRail" class="gacha-cut-guide-rail" d=""></path>
-                    <path id="gachaCutGuidePath" class="gacha-cut-guide" d=""></path>
-                    <path id="gachaCutPath" class="gacha-cut-path" d=""></path>
-                  </svg>
-                  <p class="gacha-cut-hint">Trace the dashed line to open</p>
-                </div>
-              </button>
-              <div class="gacha-pack-meta">
-                <p id="gachaPackSeries" class="gacha-pack-series"></p>
-                <p id="gachaPackName" class="gacha-pack-name"></p>
-                <p class="gacha-pack-cta">Cut to open</p>
+              <div class="gacha-pack-picker-field">
+                <p class="gacha-pack-picker-title">Choose Pack Set</p>
+                <div
+                  id="gachaPackPicker"
+                  class="gacha-pack-picker"
+                  role="listbox"
+                  aria-label="Choose pack set"
+                ></div>
               </div>
-              <p id="gachaStatus" class="gacha-status">Pick a set, then open a pack.</p>
             </div>
 
-            <div id="gachaResult" class="gacha-result"></div>
+            <p class="gacha-picker-help">Click a pack tile to pop it out and open it.</p>
+
+            <div id="gachaPopout" class="gacha-popout" aria-hidden="true">
+              <div id="gachaPopoutBackdrop" class="gacha-popout-backdrop" data-close-gacha-popout></div>
+              <section
+                id="gachaPopoutPanel"
+                class="gacha-popout-panel is-info-hidden"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Open selected booster pack"
+              >
+                <div class="gacha-popout-layout">
+                  <div class="gacha-stage">
+                    <button id="gachaPackCard" class="gacha-pack" type="button">
+                      <div class="gacha-pack-visual" aria-hidden="true">
+                        <img id="gachaPackArt" class="gacha-pack-art" alt="Booster pack art" />
+                        <img id="gachaPackLogo" class="gacha-pack-logo" alt="Pack logo" />
+                      </div>
+
+                      <div id="gachaCutLayer" class="gacha-cut-layer">
+                        <svg id="gachaCutSvg" preserveAspectRatio="none">
+                          <path id="gachaCutGuideRail" class="gacha-cut-guide-rail" d=""></path>
+                          <path id="gachaCutGuidePath" class="gacha-cut-guide" d=""></path>
+                          <path id="gachaCutPath" class="gacha-cut-path" d=""></path>
+                        </svg>
+                        <p class="gacha-cut-hint">OPEN PACK</p>
+                      </div>
+                    </button>
+                    <div class="gacha-pack-meta">
+                      <p id="gachaPackSeries" class="gacha-pack-series"></p>
+                      <p id="gachaPackName" class="gacha-pack-name"></p>
+                      <p class="gacha-pack-cta">Cut to open</p>
+                    </div>
+                    <p id="gachaStatus" class="gacha-status">Pick a set, then open a pack.</p>
+
+                    <div class="gacha-bounce-wrap">
+                      <div
+                        id="gachaBounceCards"
+                        class="bounceCardsContainer"
+                        role="listbox"
+                        aria-label="Choose one pack"
+                      ></div>
+                      <p class="gacha-bounce-label">Choose 1 of 7 packs</p>
+                    </div>
+                  </div>
+
+                  <button
+                    id="gachaInfoToggleBtn"
+                    class="gacha-info-toggle"
+                    type="button"
+                    aria-label="Show odds"
+                    aria-pressed="false"
+                  >
+                    Odds
+                  </button>
+
+                  <aside id="gachaPopoutInfo" class="gacha-popout-info" aria-label="Pack possible contents">
+                    <div id="gachaContentsPreview" class="gacha-contents-preview"></div>
+                  </aside>
+                </div>
+              </section>
+            </div>
+
           </section>
         </section>
       </main>

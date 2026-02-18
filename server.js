@@ -556,6 +556,203 @@ function packVisualFromSet(set) {
   };
 }
 
+function slotNineWeight(card) {
+  const tier = rarityTier(card);
+  const label = rarityLabel(card);
+
+  if (tier === "rare" && label.includes("holo")) {
+    return 1.9;
+  }
+
+  if (tier === "rare") {
+    return 1.45;
+  }
+
+  if (tier === "uncommon") {
+    return 1.25;
+  }
+
+  if (tier === "ultra") {
+    return 0.25;
+  }
+
+  return 0;
+}
+
+function previewTierForCard(card) {
+  const tier = rarityTier(card);
+  if (tier === "ultra") {
+    return "ultra";
+  }
+
+  if (tier === "rare" || isRarePlus(card)) {
+    return "rare";
+  }
+
+  if (tier === "uncommon") {
+    return "uncommon";
+  }
+
+  if (tier === "common") {
+    return "common";
+  }
+
+  return "other";
+}
+
+function buildGachaPreviewData(set, setCards) {
+  const allCards = [...setCards];
+
+  const buckets = {
+    ultra: [],
+    rare: [],
+    uncommon: [],
+    common: [],
+    other: []
+  };
+
+  for (const card of allCards) {
+    buckets[previewTierForCard(card)].push(card);
+  }
+
+  for (const key of Object.keys(buckets)) {
+    buckets[key].sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  const orderedPreviewCards = [
+    ...buckets.ultra,
+    ...buckets.rare,
+    ...buckets.uncommon,
+    ...buckets.common,
+    ...buckets.other
+  ];
+
+  const slotNineCandidates = setCards.filter((card) => {
+    const tier = rarityTier(card);
+    return tier === "uncommon" || tier === "rare" || tier === "ultra";
+  });
+
+  const slotNineTotals = {
+    uncommon: 0,
+    rare: 0,
+    ultra: 0,
+    all: 0
+  };
+
+  for (const card of slotNineCandidates) {
+    const weight = slotNineWeight(card);
+    if (weight <= 0) {
+      continue;
+    }
+
+    const tier = rarityTier(card);
+    slotNineTotals.all += weight;
+    if (tier === "uncommon") {
+      slotNineTotals.uncommon += weight;
+    } else if (tier === "rare") {
+      slotNineTotals.rare += weight;
+    } else if (tier === "ultra") {
+      slotNineTotals.ultra += weight;
+    }
+  }
+
+  const finalSlotCandidates = setCards.filter((card) => {
+    const tier = rarityTier(card);
+    return tier === "rare" || tier === "ultra" || isRarePlus(card);
+  });
+
+  const finalSlotRarePlusCount = finalSlotCandidates.filter((card) =>
+    isRarePlus(card)
+  ).length;
+  const finalSlotRareCount = finalSlotCandidates.filter(
+    (card) => previewTierForCard(card) === "rare"
+  ).length;
+  const finalSlotUltraCount = finalSlotCandidates.filter(
+    (card) => rarityTier(card) === "ultra"
+  ).length;
+
+  const slotNineUncommonChance = slotNineTotals.all
+    ? slotNineTotals.uncommon / slotNineTotals.all
+    : 0;
+  const slotNineRareChance = slotNineTotals.all ? slotNineTotals.rare / slotNineTotals.all : 0;
+  const slotNineUltraChance = slotNineTotals.all
+    ? slotNineTotals.ultra / slotNineTotals.all
+    : 0;
+
+  const finalSlotRarePlusChance = finalSlotCandidates.length
+    ? finalSlotRarePlusCount / finalSlotCandidates.length
+    : 0;
+  const finalSlotRareChance = finalSlotCandidates.length
+    ? finalSlotRareCount / finalSlotCandidates.length
+    : 0;
+  const finalSlotUltraChance = finalSlotCandidates.length
+    ? finalSlotUltraCount / finalSlotCandidates.length
+    : 0;
+
+  const commonCount = buckets.common.length;
+  const uncommonCount = buckets.uncommon.length;
+  const rareCount = buckets.rare.length;
+  const ultraCount = buckets.ultra.length;
+
+  const clampChance = (value) => Math.max(0, Math.min(value, 1));
+
+  const cardOddsByTier = {
+    common: commonCount ? clampChance(Math.min(5, commonCount) / commonCount) : 0,
+    uncommon: 0,
+    rare: 0,
+    ultra: 0,
+    other: 0
+  };
+
+  if (uncommonCount) {
+    const baseUncommonChance = clampChance(Math.min(3, uncommonCount) / uncommonCount);
+    const slotNineUncommonPerCard = clampChance(slotNineUncommonChance / uncommonCount);
+    cardOddsByTier.uncommon =
+      1 - (1 - baseUncommonChance) * (1 - slotNineUncommonPerCard);
+  }
+
+  if (rareCount) {
+    const slotNineRarePerCard = clampChance(slotNineRareChance / rareCount);
+    const finalSlotRarePerCard = clampChance(finalSlotRareChance / rareCount);
+    cardOddsByTier.rare = 1 - (1 - slotNineRarePerCard) * (1 - finalSlotRarePerCard);
+  }
+
+  if (ultraCount) {
+    const slotNineUltraPerCard = clampChance(slotNineUltraChance / ultraCount);
+    const finalSlotUltraPerCard = clampChance(finalSlotUltraChance / ultraCount);
+    cardOddsByTier.ultra = 1 - (1 - slotNineUltraPerCard) * (1 - finalSlotUltraPerCard);
+  }
+
+  return {
+    set: {
+      id: set.id,
+      name: set.name,
+      series: set.series,
+      releaseDate: set.releaseDate,
+      total: set.total,
+      visual: packVisualFromSet(set)
+    },
+    contentsPreview: orderedPreviewCards.map((card) => {
+      const tier = previewTierForCard(card);
+      return {
+        ...normalizeCardForClient(card),
+        oddsTier: tier,
+        estimatedOdds: cardOddsByTier[tier] || 0
+      };
+    }),
+    odds: {
+      guaranteedCommonSlots: 5,
+      guaranteedUncommonSlots: 3,
+      finalSlotRarePlusChance,
+      finalSlotRareChance,
+      finalSlotUltraChance,
+      slotNineUncommonChance,
+      slotNineRareChance,
+      slotNineUltraChance
+    }
+  };
+}
+
 async function getSetsFromApi() {
   const response = await tcgClient.get("/sets", {
     params: {
@@ -779,6 +976,57 @@ app.get("/api/gacha/packs", async (_req, res) => {
 
     res.status(statusCode).json({
       error: "Unable to load gacha packs",
+      details,
+      source
+    });
+  }
+});
+
+app.get("/api/gacha/preview", async (req, res) => {
+  const source = getActiveSource();
+  const setId = sanitizeSetId(req.query.setId);
+
+  if (!setId) {
+    res.status(400).json({
+      error: "setId is required"
+    });
+    return;
+  }
+
+  try {
+    await ensureBoosterArtLoaded();
+
+    const set =
+      source === "github" ? await getSetByIdLocal(setId) : await getSetByIdApi(setId);
+
+    if (!set) {
+      res.status(404).json({
+        error: "Set not found"
+      });
+      return;
+    }
+
+    const setCards =
+      source === "github" ? await getSetCardsLocal(setId) : await getSetCardsApi(setId);
+
+    if (!setCards.length) {
+      res.status(404).json({
+        error: "No cards available for this set"
+      });
+      return;
+    }
+
+    const previewData = buildGachaPreviewData(set, setCards);
+    res.json({
+      source,
+      ...previewData
+    });
+  } catch (error) {
+    const statusCode = error.response?.status || 500;
+    const details = error.response?.data?.error?.message || error.message;
+
+    res.status(statusCode).json({
+      error: "Unable to load gacha preview",
       details,
       source
     });
