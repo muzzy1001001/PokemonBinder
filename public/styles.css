@@ -13,10 +13,12 @@
   --accent-blue: #3a88d7;
   --shadow: 0 18px 36px rgba(22, 25, 33, 0.18);
   --page-max-width: 1540px;
+  --cursor-pokeball: url("https://www.rw-designer.com/cursor-extern.php?id=113449"), auto;
 }
 
 * {
   box-sizing: border-box;
+  cursor: var(--cursor-pokeball);
 }
 
 body {
@@ -121,7 +123,7 @@ body.modal-open {
   border-radius: 0.68rem;
   padding: 0.6rem 0.7rem;
   font-weight: 700;
-  cursor: pointer;
+  cursor: var(--cursor-pokeball);
   transition: background 150ms ease, border-color 150ms ease, transform 120ms ease;
 }
 
@@ -267,7 +269,7 @@ button {
   background: linear-gradient(140deg, var(--accent-red), #d83931);
   color: #fff;
   font-weight: 800;
-  cursor: pointer;
+  cursor: var(--cursor-pokeball);
   transition: transform 120ms ease, filter 120ms ease;
 }
 
@@ -278,7 +280,7 @@ button:hover {
 
 button:disabled {
   opacity: 0.45;
-  cursor: not-allowed;
+  cursor: var(--cursor-pokeball);
   transform: none;
 }
 
@@ -323,7 +325,7 @@ button:disabled {
   flex-direction: column;
   gap: 0.48rem;
   height: 100%;
-  cursor: pointer;
+  cursor: var(--cursor-pokeball);
 }
 
 .card-item:focus-visible {
@@ -474,43 +476,39 @@ button:disabled {
   width: min(100%, 360px);
   aspect-ratio: var(--pack-aspect, 0.73);
   border-radius: 1rem;
-  border: 1px solid rgba(255, 255, 255, 0.45);
-  background: linear-gradient(140deg, var(--pack-from, #3b82f6), var(--pack-to, #f97316));
-  box-shadow: 0 20px 44px rgba(17, 26, 46, 0.35);
+  border: 1px solid rgba(32, 47, 73, 0.2);
+  background: transparent;
+  box-shadow: 0 18px 34px rgba(17, 26, 46, 0.28);
   display: block;
   padding: 0;
   transform-style: preserve-3d;
-  transition: transform 180ms ease, filter 180ms ease;
+  transition: box-shadow 160ms ease;
   overflow: hidden;
   position: relative;
 }
 
-.gacha-pack:hover {
-  transform: rotateY(-6deg) rotateX(3deg) translateY(-2px);
-}
-
 .gacha-pack.has-pack-art {
-  background: #0f1623;
-  border-color: rgba(255, 255, 255, 0.2);
+  background: transparent;
+  border-color: rgba(26, 38, 60, 0.24);
 }
 
 .gacha-pack:disabled {
   opacity: 0.55;
-  cursor: not-allowed;
-  transform: none;
+  cursor: var(--cursor-pokeball);
+  box-shadow: 0 10px 16px rgba(20, 28, 42, 0.18);
   filter: grayscale(0.2);
 }
 
 .gacha-pack.is-cutting {
-  filter: brightness(1.08) saturate(1.06);
+  box-shadow: 0 22px 36px rgba(23, 34, 52, 0.32);
 }
 
 .gacha-pack.is-ripped {
-  animation: packSpinPop 700ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  box-shadow: 0 10px 20px rgba(20, 28, 42, 0.18);
 }
 
 .gacha-pack.is-cut .gacha-pack-visual {
-  animation: wrapperSlice 380ms ease forwards;
+  opacity: 0.96;
 }
 
 .gacha-pack-visual {
@@ -525,12 +523,12 @@ button:disabled {
   position: absolute;
   inset: 0;
   z-index: 2;
-  cursor: crosshair;
+  cursor: var(--cursor-pokeball);
   touch-action: none;
 }
 
 .gacha-pack.is-cutting .gacha-cut-layer {
-  cursor: crosshair;
+  cursor: var(--cursor-pokeball);
 }
 
 #gachaCutSvg {
@@ -542,11 +540,37 @@ button:disabled {
 
 .gacha-cut-path {
   fill: none;
-  stroke: rgba(255, 243, 186, 0.92);
-  stroke-width: 3.4;
+  stroke: rgba(255, 244, 201, 0.95);
+  stroke-width: 3.1;
   stroke-linecap: round;
   stroke-linejoin: round;
-  filter: drop-shadow(0 0 4px rgba(255, 245, 193, 0.78));
+  transition: stroke 120ms ease, filter 120ms ease;
+  filter: drop-shadow(0 0 3px rgba(255, 246, 204, 0.58));
+}
+
+.gacha-pack.is-rip-aligned .gacha-cut-path {
+  stroke: rgba(92, 231, 132, 0.98);
+  filter: drop-shadow(0 0 5px rgba(122, 255, 161, 0.9));
+}
+
+.gacha-cut-guide-rail {
+  fill: none;
+  stroke: rgba(9, 20, 38, 0.62);
+  stroke-width: 5.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.76;
+}
+
+.gacha-cut-guide {
+  fill: none;
+  stroke: rgba(240, 248, 255, 0.98);
+  stroke-width: 2.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 6 6;
+  opacity: 0.95;
+  filter: drop-shadow(0 0 2px rgba(8, 16, 31, 0.85));
 }
 
 .gacha-cut-hint {
@@ -568,7 +592,7 @@ button:disabled {
 
 .gacha-pack.is-cutting .gacha-cut-hint,
 .gacha-pack.is-cut .gacha-cut-hint {
-  opacity: 0;
+  opacity: 0.3;
 }
 
 .gacha-pack-series {
@@ -738,17 +762,18 @@ button:disabled {
   align-items: center;
   justify-content: center;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  background: rgba(8, 17, 31, 0.82);
-  border: 1px solid rgba(205, 223, 251, 0.3);
-  border-radius: 0.78rem;
-  padding: 0.45rem 0.5rem;
+  gap: 0.45rem;
+  padding: 0;
 }
 
 .modal-reveal-counter {
   margin: 0;
-  color: #e6f0ff;
-  font-size: 0.82rem;
+  color: #f2f7ff;
+  background: rgba(7, 15, 29, 0.66);
+  border: 1px solid rgba(229, 240, 255, 0.25);
+  border-radius: 999px;
+  padding: 0.2rem 0.54rem;
+  font-size: 0.8rem;
   font-weight: 700;
 }
 
@@ -767,12 +792,12 @@ button:disabled {
   width: 100%;
   perspective: 1100px;
   touch-action: manipulation;
-  cursor: grab;
+  cursor: var(--cursor-pokeball);
   user-select: none;
 }
 
 .tilt-stage.is-grabbing {
-  cursor: grabbing;
+  cursor: var(--cursor-pokeball);
 }
 
 .tilt-card {
@@ -781,11 +806,7 @@ button:disabled {
   transform-style: preserve-3d;
   transition: transform 220ms ease;
   box-shadow: 0 22px 55px rgba(8, 15, 30, 0.5);
-  overflow: hidden;
-}
-
-.tilt-card.is-spinning {
-  animation: cardSpinIn 430ms ease;
+  overflow: visible;
 }
 
 .tilt-card.is-dragging {
@@ -835,11 +856,56 @@ button:disabled {
   position: relative;
   width: 100%;
   transform-style: preserve-3d;
-  transition: transform 560ms cubic-bezier(0.2, 0.72, 0.2, 1);
+  --flip-y: 0deg;
+  --swipe-x: 0px;
+  --swipe-r: 0deg;
+  transform: translate3d(var(--swipe-x), 0, 0) rotateZ(var(--swipe-r)) rotateY(var(--flip-y));
+  transition: transform 560ms cubic-bezier(0.2, 0.72, 0.2, 1), opacity 220ms ease;
+  z-index: 10;
+  will-change: transform;
 }
 
 .modal-flip-card.is-revealed {
-  transform: rotateY(180deg);
+  --flip-y: 180deg;
+}
+
+.modal-flip-card.is-snap {
+  transition: none !important;
+}
+
+.modal-flip-card.is-swipe-dragging {
+  transition: none;
+}
+
+.modal-flip-card.is-swipe-out {
+  transition: transform 220ms cubic-bezier(0.22, 0.75, 0.3, 1), opacity 220ms ease;
+  opacity: 0.16;
+}
+
+.modal-next-card {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  transform: translate3d(0, 12px, -18px) scale(0.985);
+  border-radius: 0.95rem;
+  overflow: hidden;
+  box-shadow: 0 14px 24px rgba(8, 15, 30, 0.3);
+  opacity: 0.93;
+  transition: transform 200ms ease, opacity 200ms ease;
+  pointer-events: none;
+}
+
+.modal-next-card img {
+  width: 100%;
+  display: block;
+  border-radius: 0.95rem;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.tilt-card.is-swipe-active .modal-next-card {
+  transform: translate3d(0, 7px, -10px) scale(0.994);
+  opacity: 1;
 }
 
 .modal-card-face {
@@ -854,6 +920,15 @@ button:disabled {
 .modal-card-back {
   position: absolute;
   inset: 0;
+}
+
+.modal-flip-card.is-front-locked .modal-card-back {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.modal-flip-card.is-front-locked .modal-card-front {
+  backface-visibility: visible;
 }
 
 @media (max-width: 1040px) {
@@ -900,43 +975,5 @@ button:disabled {
 
   .modal-reveal-info {
     justify-content: flex-start;
-  }
-}
-
-@keyframes packSpinPop {
-  0% {
-    transform: rotateY(-7deg) rotateX(2deg) scale(1);
-  }
-  46% {
-    transform: rotateY(26deg) rotateX(-5deg) scale(1.04);
-  }
-  100% {
-    transform: rotateY(0deg) rotateX(0deg) scale(1);
-  }
-}
-
-@keyframes wrapperSlice {
-  0% {
-    transform: translateY(0) rotate(0deg) scale(1);
-    opacity: 1;
-  }
-  100% {
-    transform: translateY(-24px) rotate(-6deg) scale(0.98);
-    opacity: 0.18;
-  }
-}
-
-@keyframes cardSpinIn {
-  0% {
-    transform: rotateY(-110deg) scale(0.8);
-    opacity: 0;
-  }
-  72% {
-    transform: rotateY(16deg) scale(1.03);
-    opacity: 1;
-  }
-  100% {
-    transform: rotateY(0deg) scale(1);
-    opacity: 1;
   }
 }

@@ -208,9 +208,11 @@
 
                 <div id="gachaCutLayer" class="gacha-cut-layer">
                   <svg id="gachaCutSvg" preserveAspectRatio="none">
+                    <path id="gachaCutGuideRail" class="gacha-cut-guide-rail" d=""></path>
+                    <path id="gachaCutGuidePath" class="gacha-cut-guide" d=""></path>
                     <path id="gachaCutPath" class="gacha-cut-path" d=""></path>
                   </svg>
-                  <p class="gacha-cut-hint">Draw a cut line across the wrapper</p>
+                  <p class="gacha-cut-hint">Trace the dashed line to open</p>
                 </div>
               </button>
               <div class="gacha-pack-meta">
@@ -255,6 +257,14 @@
                   draggable="false"
                 />
               </div>
+            </div>
+            <div id="modalNextCard" class="modal-next-card" hidden>
+              <img
+                id="modalNextCardImage"
+                src=""
+                alt="Next card preview"
+                draggable="false"
+              />
             </div>
           </div>
         </div>

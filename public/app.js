@@ -38,9 +38,12 @@ const state = {
     revealIndex: 0,
     revealSetName: "",
     revealStage: "front",
+    flipAllRevealed: false,
     ripActive: false,
     ripDone: false,
     ripPointerId: null,
+    cutGuidePoints: [],
+    ripAligned: false,
     ripMinX: 0,
     ripMaxX: 0,
     ripPoints: [],
@@ -73,6 +76,8 @@ const el = {
   gachaPackCard: document.getElementById("gachaPackCard"),
   gachaCutLayer: document.getElementById("gachaCutLayer"),
   gachaCutSvg: document.getElementById("gachaCutSvg"),
+  gachaCutGuideRail: document.getElementById("gachaCutGuideRail"),
+  gachaCutGuidePath: document.getElementById("gachaCutGuidePath"),
   gachaCutPath: document.getElementById("gachaCutPath"),
   gachaPackSeries: document.getElementById("gachaPackSeries"),
   gachaPackArt: document.getElementById("gachaPackArt"),
@@ -83,6 +88,8 @@ const el = {
   emptyStateTemplate: document.getElementById("emptyStateTemplate"),
   cardModal: document.getElementById("cardModal"),
   modalFlipCard: document.getElementById("modalFlipCard"),
+  modalNextCard: document.getElementById("modalNextCard"),
+  modalNextCardImage: document.getElementById("modalNextCardImage"),
   modalCardFrontImage: document.getElementById("modalCardFrontImage"),
   modalCardBackImage: document.getElementById("modalCardBackImage"),
   modalHint: document.getElementById("modalHint"),
@@ -97,10 +104,13 @@ const sidebarLinks = Array.from(document.querySelectorAll(".sidebar-link"));
 
 const tiltState = {
   isDragging: false,
+  mode: "tilt",
   pointerId: null,
   startX: 0,
   startY: 0,
-  dragDistance: 0
+  dragDistance: 0,
+  deltaX: 0,
+  deltaY: 0
 };
 
 function toPositiveInt(value, fallback = 1) {
@@ -274,6 +284,7 @@ function resetTilt() {
   el.modalTiltCard.style.setProperty("--shine-x", "50%");
   el.modalTiltCard.style.setProperty("--shine-y", "50%");
   el.modalTiltCard.style.setProperty("--shine-strength", "0.24");
+  el.modalTiltStage.classList.remove("is-tilting");
 }
 
 function setModalRevealMode(enabled) {
@@ -287,18 +298,75 @@ function setModalRevealMode(enabled) {
   }
 }
 
-function spinModalCard() {
-  el.modalTiltCard.classList.remove("is-spinning");
-  void el.modalTiltCard.offsetWidth;
-  el.modalTiltCard.classList.add("is-spinning");
-}
-
 function setModalCardFace(card, showBackFirst = false) {
   el.modalCardFrontImage.src = card.images?.large || card.images?.small || "";
   el.modalCardFrontImage.alt = `${card.name} card preview`;
   el.modalCardBackImage.src = "/cardback.jpg";
   el.modalCardBackImage.alt = "Pokemon card back";
   el.modalFlipCard.classList.toggle("is-revealed", !showBackFirst);
+}
+
+function resetRevealSwipeTransform(useSnap = true) {
+  if (useSnap) {
+    el.modalFlipCard.classList.add("is-snap");
+  } else {
+    el.modalFlipCard.classList.remove("is-snap");
+  }
+
+  el.modalFlipCard.classList.remove("is-swipe-dragging", "is-swipe-out");
+  el.modalTiltCard.classList.remove("is-swipe-active");
+  el.modalFlipCard.style.setProperty("--swipe-x", "0px");
+  el.modalFlipCard.style.setProperty("--swipe-r", "0deg");
+
+  if (useSnap) {
+    window.requestAnimationFrame(() => {
+      el.modalFlipCard.classList.remove("is-snap");
+    });
+  }
+}
+
+function applyRevealSwipeTransform(deltaX) {
+  const clampedX = Math.max(Math.min(deltaX, 240), -240);
+  const rotation = clampedX * 0.055;
+
+  el.modalFlipCard.classList.add("is-swipe-dragging");
+  el.modalTiltCard.classList.add("is-swipe-active");
+  el.modalFlipCard.style.setProperty("--swipe-x", `${clampedX.toFixed(2)}px`);
+  el.modalFlipCard.style.setProperty("--swipe-r", `${rotation.toFixed(2)}deg`);
+}
+
+function swipeRevealCardOut(direction) {
+  const dir = direction >= 0 ? 1 : -1;
+  el.modalFlipCard.classList.remove("is-swipe-dragging");
+  el.modalTiltCard.classList.remove("is-swipe-active");
+  el.modalFlipCard.classList.add("is-swipe-out");
+  el.modalFlipCard.style.setProperty("--swipe-x", `${dir * 560}px`);
+  el.modalFlipCard.style.setProperty("--swipe-r", `${dir * 22}deg`);
+
+  window.setTimeout(() => {
+    resetRevealSwipeTransform();
+    advanceGachaReveal();
+  }, 220);
+}
+
+function hideNextRevealPreview() {
+  el.modalNextCard.hidden = true;
+  el.modalNextCardImage.removeAttribute("src");
+  el.modalNextCard.classList.remove("is-back");
+}
+
+function updateNextRevealPreview() {
+  const nextItem = state.gacha.revealQueue[state.gacha.revealIndex + 1];
+
+  if (!state.gacha.revealing || !nextItem || !state.gacha.flipAllRevealed) {
+    hideNextRevealPreview();
+    return;
+  }
+
+  el.modalNextCard.hidden = false;
+  el.modalNextCard.classList.remove("is-back");
+  el.modalNextCardImage.src = nextItem.card.images?.large || nextItem.card.images?.small || "";
+  el.modalNextCardImage.alt = `${nextItem.card.name} next card`;
 }
 
 function updateTilt(clientX, clientY) {
@@ -328,16 +396,25 @@ function startTilt(event) {
 
   event.preventDefault();
   tiltState.isDragging = true;
+  tiltState.mode =
+    state.gacha.revealing && state.gacha.revealStage === "front" ? "swipe" : "tilt";
   tiltState.pointerId = event.pointerId;
   tiltState.startX = event.clientX;
   tiltState.startY = event.clientY;
   tiltState.dragDistance = 0;
+  tiltState.deltaX = 0;
+  tiltState.deltaY = 0;
 
   el.modalTiltStage.classList.add("is-grabbing");
   el.modalTiltCard.classList.add("is-dragging");
 
   if (el.modalTiltStage.setPointerCapture) {
     el.modalTiltStage.setPointerCapture(event.pointerId);
+  }
+
+  if (tiltState.mode === "swipe") {
+    resetRevealSwipeTransform();
+    return;
   }
 
   updateTilt(event.clientX, event.clientY);
@@ -354,10 +431,21 @@ function moveTilt(event) {
 
   const deltaX = event.clientX - tiltState.startX;
   const deltaY = event.clientY - tiltState.startY;
+  tiltState.deltaX = deltaX;
+  tiltState.deltaY = deltaY;
   tiltState.dragDistance = Math.max(
     tiltState.dragDistance,
     Math.hypot(deltaX, deltaY)
   );
+
+  if (tiltState.mode === "swipe") {
+    applyRevealSwipeTransform(deltaX);
+    return;
+  }
+
+  if (tiltState.dragDistance > 8) {
+    el.modalTiltStage.classList.add("is-tilting");
+  }
 
   updateTilt(event.clientX, event.clientY);
 }
@@ -389,6 +477,24 @@ function endTilt(event) {
   el.modalTiltStage.classList.remove("is-grabbing");
   el.modalTiltCard.classList.remove("is-dragging");
 
+  if (tiltState.mode === "swipe") {
+    const absX = Math.abs(tiltState.deltaX);
+    const absY = Math.abs(tiltState.deltaY);
+    const canSwipe = absX > 95 && absX > absY * 1.15;
+
+    if (canSwipe) {
+      swipeRevealCardOut(tiltState.deltaX);
+    } else {
+      resetRevealSwipeTransform();
+    }
+
+    tiltState.dragDistance = 0;
+    tiltState.deltaX = 0;
+    tiltState.deltaY = 0;
+    tiltState.mode = "tilt";
+    return;
+  }
+
   if (
     state.gacha.revealing &&
     state.gacha.revealStage === "back" &&
@@ -398,10 +504,16 @@ function endTilt(event) {
   }
 
   tiltState.dragDistance = 0;
+  tiltState.deltaX = 0;
+  tiltState.deltaY = 0;
+  tiltState.mode = "tilt";
 }
 
 function openCardModal(card) {
   setModalCardFace(card, false);
+  el.modalFlipCard.classList.remove("is-front-locked");
+  resetRevealSwipeTransform();
+  hideNextRevealPreview();
 
   setModalRevealMode(false);
   el.cardModal.classList.add("is-open");
@@ -424,7 +536,11 @@ function closeCardModal() {
   el.cardModal.setAttribute("aria-hidden", "true");
   document.body.classList.remove("modal-open");
   setModalRevealMode(false);
+  el.modalTiltStage.classList.remove("is-grabbing", "is-tilting");
   el.modalFlipCard.classList.add("is-revealed");
+  el.modalFlipCard.classList.remove("is-front-locked");
+  resetRevealSwipeTransform();
+  hideNextRevealPreview();
   resetTilt();
 }
 
@@ -644,6 +760,102 @@ function syncCutSvgToPack() {
   el.gachaCutSvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
 }
 
+function buildCutGuidePoints(width, height) {
+  const guideY = height * 0.06;
+  return [
+    { x: width * 0.1, y: guideY },
+    { x: width * 0.9, y: guideY }
+  ];
+}
+
+function pointsToPath(points) {
+  if (!points.length) {
+    return "";
+  }
+
+  return points
+    .map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(1)} ${point.y.toFixed(1)}`)
+    .join(" ");
+}
+
+function updateCutGuidePath() {
+  const rect = el.gachaPackCard.getBoundingClientRect();
+  if (!rect.width || !rect.height) {
+    state.gacha.cutGuidePoints = [];
+    if (el.gachaCutGuideRail) {
+      el.gachaCutGuideRail.setAttribute("d", "");
+    }
+    el.gachaCutGuidePath.setAttribute("d", "");
+    return;
+  }
+
+  const guidePoints = buildCutGuidePoints(rect.width, rect.height);
+  state.gacha.cutGuidePoints = guidePoints;
+  const guidePath = pointsToPath(guidePoints);
+  if (el.gachaCutGuideRail) {
+    el.gachaCutGuideRail.setAttribute("d", guidePath);
+  }
+  el.gachaCutGuidePath.setAttribute("d", guidePath);
+}
+
+function setRipAlignment(isAligned, options = {}) {
+  const nextValue = Boolean(isAligned);
+  if (state.gacha.ripAligned === nextValue) {
+    return;
+  }
+
+  state.gacha.ripAligned = nextValue;
+  el.gachaPackCard.classList.toggle("is-rip-aligned", nextValue);
+
+  if (!options.silent && state.gacha.ripActive) {
+    el.gachaStatus.textContent = nextValue
+      ? "Aligned. Keep tracing the line to the end."
+      : "Off the line. Move back onto the guide.";
+  }
+}
+
+function distanceBetweenPoints(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function distancePointToSegment(point, segStart, segEnd) {
+  const dx = segEnd.x - segStart.x;
+  const dy = segEnd.y - segStart.y;
+  const lengthSq = dx * dx + dy * dy;
+
+  if (lengthSq === 0) {
+    return distanceBetweenPoints(point, segStart);
+  }
+
+  const t = Math.max(
+    0,
+    Math.min(1, ((point.x - segStart.x) * dx + (point.y - segStart.y) * dy) / lengthSq)
+  );
+
+  const proj = {
+    x: segStart.x + t * dx,
+    y: segStart.y + t * dy
+  };
+
+  return distanceBetweenPoints(point, proj);
+}
+
+function distancePointToPolyline(point, polyline) {
+  if (polyline.length < 2) {
+    return Infinity;
+  }
+
+  let minDistance = Infinity;
+  for (let index = 0; index < polyline.length - 1; index += 1) {
+    const distance = distancePointToSegment(point, polyline[index], polyline[index + 1]);
+    if (distance < minDistance) {
+      minDistance = distance;
+    }
+  }
+
+  return minDistance;
+}
+
 function updatePackAspectRatioFromImage() {
   const imageWidth = el.gachaPackArt.naturalWidth;
   const imageHeight = el.gachaPackArt.naturalHeight;
@@ -675,6 +887,7 @@ function updateGachaPackVisual() {
     el.gachaPackCard.classList.remove("has-pack-art");
     el.gachaPackCard.disabled = true;
     syncCutSvgToPack();
+    updateCutGuidePath();
     return;
   }
 
@@ -714,8 +927,11 @@ function updateGachaPackVisual() {
   const hasSet = Boolean(state.gacha.selectedSetId);
   el.gachaPackCard.disabled = !hasSet || isBusy;
 
+  syncCutSvgToPack();
+  updateCutGuidePath();
+
   if (!state.gacha.ripDone && !isBusy) {
-    el.gachaStatus.textContent = "Draw a cut line across the wrapper to open.";
+    el.gachaStatus.textContent = "Trace the dashed line to open this pack.";
   }
 }
 
@@ -723,6 +939,7 @@ function resetPackRipState() {
   state.gacha.ripActive = false;
   state.gacha.ripDone = false;
   state.gacha.ripPointerId = null;
+  state.gacha.ripAligned = false;
   state.gacha.ripDistance = 0;
   state.gacha.ripMinX = 0;
   state.gacha.ripMaxX = 0;
@@ -730,8 +947,9 @@ function resetPackRipState() {
   state.gacha.ripStartX = 0;
   state.gacha.ripStartY = 0;
 
-  el.gachaPackCard.classList.remove("is-cutting", "is-cut", "is-ripped");
+  el.gachaPackCard.classList.remove("is-cutting", "is-cut", "is-ripped", "is-rip-aligned");
   el.gachaCutPath.setAttribute("d", "");
+  updateCutGuidePath();
 }
 
 function getLocalPackPoint(event) {
@@ -776,7 +994,14 @@ function beginPackRip(event) {
   event.stopPropagation();
 
   syncCutSvgToPack();
+  updateCutGuidePath();
   const point = getLocalPackPoint(event);
+
+  const guideStart = state.gacha.cutGuidePoints[0];
+  if (!guideStart || distanceBetweenPoints(point, guideStart) > 34) {
+    el.gachaStatus.textContent = "Start tracing near the beginning of the dashed line.";
+    return;
+  }
 
   state.gacha.ripActive = true;
   state.gacha.ripPointerId = event.pointerId;
@@ -786,12 +1011,14 @@ function beginPackRip(event) {
   state.gacha.ripMaxX = point.x;
   state.gacha.ripPoints = [point];
   state.gacha.ripDistance = 0;
+  setRipAlignment(true, { silent: true });
 
   el.gachaPackCard.classList.add("is-cutting");
   if (el.gachaCutLayer.setPointerCapture) {
     el.gachaCutLayer.setPointerCapture(event.pointerId);
   }
 
+  el.gachaStatus.textContent = "Good. Keep tracing along the dashed path.";
   renderCutPath();
 }
 
@@ -819,6 +1046,10 @@ function movePackRip(event) {
   state.gacha.ripDistance += segmentLength;
   state.gacha.ripMinX = Math.min(state.gacha.ripMinX, point.x);
   state.gacha.ripMaxX = Math.max(state.gacha.ripMaxX, point.x);
+
+  const distanceToGuide = distancePointToPolyline(point, state.gacha.cutGuidePoints);
+  setRipAlignment(distanceToGuide <= 16);
+
   renderCutPath();
 }
 
@@ -826,6 +1057,7 @@ function completePackRip() {
   state.gacha.ripActive = false;
   state.gacha.ripDone = true;
   state.gacha.ripPointerId = null;
+  setRipAlignment(true, { silent: true });
 
   el.gachaPackCard.classList.remove("is-cutting");
   el.gachaPackCard.classList.add("is-cut", "is-ripped");
@@ -851,9 +1083,48 @@ function endPackRip(event) {
   }
 
   const packWidth = el.gachaPackCard.getBoundingClientRect().width;
+  const guide = state.gacha.cutGuidePoints;
+  const userPoints = state.gacha.ripPoints;
   const horizontalSpan = Math.max(state.gacha.ripMaxX - state.gacha.ripMinX, 0);
+
+  let avgDistance = Infinity;
+  let maxDistance = Infinity;
+
+  if (guide.length > 1 && userPoints.length) {
+    let sum = 0;
+    let max = 0;
+    let samples = 0;
+
+    for (let index = 0; index < userPoints.length; index += 2) {
+      const point = userPoints[index];
+      const distance = distancePointToPolyline(point, guide);
+      sum += distance;
+      max = Math.max(max, distance);
+      samples += 1;
+    }
+
+    if (samples > 0) {
+      avgDistance = sum / samples;
+      maxDistance = max;
+    }
+  }
+
+  const startNear =
+    guide[0] && userPoints[0]
+      ? distanceBetweenPoints(userPoints[0], guide[0]) <= 34
+      : false;
+  const endNear =
+    guide[guide.length - 1] && userPoints[userPoints.length - 1]
+      ? distanceBetweenPoints(userPoints[userPoints.length - 1], guide[guide.length - 1]) <= 36
+      : false;
   const crossedThreshold =
-    state.gacha.ripDistance > packWidth * 0.55 && horizontalSpan > packWidth * 0.38;
+    startNear &&
+    endNear &&
+    userPoints.length >= 9 &&
+    state.gacha.ripDistance > packWidth * 0.6 &&
+    horizontalSpan > packWidth * 0.64 &&
+    avgDistance <= 18 &&
+    maxDistance <= 34;
 
   if (crossedThreshold) {
     completePackRip();
@@ -862,13 +1133,14 @@ function endPackRip(event) {
 
   state.gacha.ripActive = false;
   state.gacha.ripPointerId = null;
+  setRipAlignment(false, { silent: true });
   state.gacha.ripDistance = 0;
   state.gacha.ripMinX = 0;
   state.gacha.ripMaxX = 0;
   state.gacha.ripPoints = [];
   el.gachaPackCard.classList.remove("is-cutting");
   renderCutPath();
-  el.gachaStatus.textContent = "Draw a longer cut line across the wrapper.";
+  el.gachaStatus.textContent = "Trace closer to the dashed line from start to end.";
 }
 
 function createGachaCardElement(card) {
@@ -949,16 +1221,32 @@ function showRevealCard() {
     return;
   }
 
-  const totalCards = state.gacha.revealQueue.length;
-  state.gacha.revealStage = "back";
+  const showBackFace = state.gacha.revealIndex === 0 && !state.gacha.flipAllRevealed;
+  state.gacha.revealStage = showBackFace ? "back" : "front";
 
-  setModalCardFace(item.card, true);
-  spinModalCard();
+  setModalCardFace(item.card, showBackFace);
+  if (showBackFace) {
+    el.modalFlipCard.classList.remove("is-front-locked");
+  } else {
+    el.modalFlipCard.classList.add("is-front-locked");
+  }
+  resetRevealSwipeTransform();
+  updateNextRevealPreview();
 
   el.modalRevealCounter.textContent = `Pack ${item.packNumber} • ${item.slotIndex}/${item.totalInPack}`;
-  el.modalRevealRarity.textContent = "Hidden";
-  el.modalRevealRarity.style.background = "linear-gradient(140deg, #334155, #475569)";
-  el.modalRevealRarity.style.borderColor = "rgba(255, 255, 255, 0.4)";
+
+  if (showBackFace) {
+    el.modalRevealRarity.textContent = "Hidden";
+    el.modalRevealRarity.style.background = "linear-gradient(140deg, #334155, #475569)";
+    el.modalRevealRarity.style.borderColor = "rgba(255, 255, 255, 0.4)";
+    el.gachaStatus.textContent = "Tap this back card once to reveal all cards front-side.";
+  } else {
+    const accent = rarityAccent(item.card.rarity);
+    el.modalRevealRarity.textContent = item.card.rarity || "Unknown rarity";
+    el.modalRevealRarity.style.background = accent.background;
+    el.modalRevealRarity.style.borderColor = accent.border;
+    el.gachaStatus.textContent = "Swipe this card away to reveal the next card.";
+  }
 
   setModalRevealMode(true);
   el.cardModal.classList.add("is-open");
@@ -977,26 +1265,22 @@ function revealCurrentCardFront() {
     return;
   }
 
-  const totalCards = state.gacha.revealQueue.length;
-  const isLast = state.gacha.revealIndex === totalCards - 1;
-
+  state.gacha.flipAllRevealed = true;
   state.gacha.revealStage = "front";
   el.modalFlipCard.classList.add("is-revealed");
+  el.modalFlipCard.classList.add("is-front-locked");
+  updateNextRevealPreview();
 
   const accent = rarityAccent(item.card.rarity);
   el.modalRevealRarity.textContent = item.card.rarity || "Unknown rarity";
   el.modalRevealRarity.style.background = accent.background;
   el.modalRevealRarity.style.borderColor = accent.border;
-
-  if (isLast) {
-    el.gachaStatus.textContent = "Final card revealed. Tap outside the card to finish.";
-  } else {
-    el.gachaStatus.textContent = "Card revealed. Tap outside the card for next.";
-  }
+  el.gachaStatus.textContent = "Great. Now swipe cards away for each next reveal.";
 }
 
 function finishGachaReveal() {
   state.gacha.revealing = false;
+  state.gacha.flipAllRevealed = false;
   state.gacha.revealQueue = [];
   state.gacha.revealIndex = 0;
   state.gacha.revealStage = "front";
@@ -1006,6 +1290,10 @@ function finishGachaReveal() {
   el.cardModal.setAttribute("aria-hidden", "true");
   document.body.classList.remove("modal-open");
   setModalRevealMode(false);
+  el.modalTiltStage.classList.remove("is-grabbing", "is-tilting");
+  el.modalFlipCard.classList.remove("is-front-locked");
+  resetRevealSwipeTransform();
+  hideNextRevealPreview();
   resetTilt();
 
   renderGachaPulls({
@@ -1043,7 +1331,10 @@ function startGachaReveal(payload) {
   state.gacha.revealSetName = payload.set?.name || "Set";
   state.gacha.revealQueue = buildGachaRevealQueue(state.gacha.lastPulls);
   state.gacha.revealIndex = 0;
+  state.gacha.flipAllRevealed = false;
   state.gacha.revealing = state.gacha.revealQueue.length > 0;
+  el.modalFlipCard.classList.remove("is-front-locked");
+  hideNextRevealPreview();
   el.addPullsBtn.disabled = true;
   el.gachaResult.innerHTML = "";
 
@@ -1055,7 +1346,7 @@ function startGachaReveal(payload) {
   }
 
   el.gachaStatus.textContent =
-    "Tap card to reveal front, then tap outside card for next.";
+    "You will see one back card first. Tap once, then swipe cards with next card visible behind.";
   showRevealCard();
   updateGachaPackVisual();
 }
@@ -1068,7 +1359,7 @@ async function openGachaPack() {
     !state.gacha.ripDone
   ) {
     if (!state.gacha.ripDone && !state.gacha.opening && !state.gacha.revealing) {
-      el.gachaStatus.textContent = "Draw a cut line first to open this pack.";
+      el.gachaStatus.textContent = "Trace the dashed line first to open this pack.";
     }
     return;
   }
@@ -1400,9 +1691,10 @@ function attachEvents() {
   el.cardModal.addEventListener("click", (event) => {
     if (event.target.hasAttribute("data-close-modal")) {
       if (state.gacha.revealing) {
-        if (state.gacha.revealStage === "front") {
-          advanceGachaReveal();
-        }
+        el.gachaStatus.textContent =
+          state.gacha.revealStage === "back"
+            ? "Tap card to flip all first."
+            : "Swipe the card away to reveal the next one.";
         return;
       }
 
@@ -1411,12 +1703,6 @@ function attachEvents() {
   });
 
   document.addEventListener("keydown", (event) => {
-    if (state.gacha.revealing && (event.key === "Enter" || event.key === " ")) {
-      event.preventDefault();
-      advanceGachaReveal();
-      return;
-    }
-
     if (event.key === "Escape") {
       closeCardModal();
     }
@@ -1426,6 +1712,11 @@ function attachEvents() {
   el.modalTiltStage.addEventListener("pointermove", moveTilt);
   el.modalTiltStage.addEventListener("pointerup", endTilt);
   el.modalTiltStage.addEventListener("pointercancel", endTilt);
+  el.modalFlipCard.addEventListener("click", () => {
+    if (state.gacha.revealing && state.gacha.revealStage === "back") {
+      revealCurrentCardFront();
+    }
+  });
   el.modalTiltStage.addEventListener("dragstart", (event) => {
     event.preventDefault();
   });
@@ -1512,14 +1803,16 @@ function attachEvents() {
   });
   el.gachaPackArt.addEventListener("load", () => {
     updatePackAspectRatioFromImage();
+    updateCutGuidePath();
   });
   window.addEventListener("resize", () => {
     syncCutSvgToPack();
+    updateCutGuidePath();
   });
 
   el.gachaPackCard.addEventListener("click", () => {
     if (!state.gacha.ripDone && !state.gacha.opening && !state.gacha.revealing) {
-      el.gachaStatus.textContent = "Draw a cut line across the wrapper to open.";
+      el.gachaStatus.textContent = "Trace the dashed cut path to open the pack.";
     }
   });
 
