@@ -31,6 +31,7 @@ const API_SORT_MAP = {
 
 const GACHA_CARDS_PER_PACK = 10;
 const GACHA_MAX_PACKS = 8;
+const GACHA_GOD_PACK_CHANCE = 0.0075;
 const BOOSTER_ART_PAGE_URL = "https://pokesymbols.com/tcg/booster-pack-art";
 const BOOSTER_ART_ORIGIN = "https://pokesymbols.com";
 
@@ -533,6 +534,28 @@ function buildPackPulls(setCards) {
   }
 
   return pulledCards;
+}
+
+function buildGodPackPulls(setCards) {
+  const rarePool = setCards.filter((card) => {
+    const tier = rarityTier(card);
+    return tier === "rare" || tier === "ultra" || isRarePlus(card);
+  });
+
+  if (!rarePool.length) {
+    return buildPackPulls(setCards);
+  }
+
+  const godPulls = [];
+  for (let index = 0; index < GACHA_CARDS_PER_PACK; index += 1) {
+    const randomCard = rarePool[Math.floor(Math.random() * rarePool.length)];
+    if (!randomCard) {
+      break;
+    }
+    godPulls.push(randomCard);
+  }
+
+  return godPulls;
 }
 
 function packVisualFromSet(set) {
@@ -1074,9 +1097,12 @@ app.post("/api/gacha/open", async (req, res) => {
 
     const pulls = [];
     for (let packNumber = 1; packNumber <= packCount; packNumber += 1) {
+      const godPack = Math.random() < GACHA_GOD_PACK_CHANCE;
+      const packCards = godPack ? buildGodPackPulls(setCards) : buildPackPulls(setCards);
       pulls.push({
         packNumber,
-        cards: buildPackPulls(setCards).map((card) => normalizeCardForClient(card))
+        godPack,
+        cards: packCards.map((card) => normalizeCardForClient(card))
       });
     }
 

@@ -232,7 +232,7 @@
                         role="listbox"
                         aria-label="Choose one pack"
                       ></div>
-                      <p class="gacha-bounce-label">Choose 1 of 7 packs</p>
+                      <p id="gachaBounceLabel" class="gacha-bounce-label">Choose 1 out of 7 packs</p>
                     </div>
                   </div>
 
@@ -249,6 +249,22 @@
                   <aside id="gachaPopoutInfo" class="gacha-popout-info" aria-label="Pack possible contents">
                     <div id="gachaContentsPreview" class="gacha-contents-preview"></div>
                   </aside>
+
+                  <section id="gachaDrawReview" class="gacha-draw-review" aria-label="Draw review" hidden>
+                    <header class="gacha-draw-review-header">
+                      <h3>Draw Review</h3>
+                      <p id="gachaDrawReviewMeta">Review your pulled cards.</p>
+                    </header>
+                    <div id="gachaResult" class="gacha-result"></div>
+                    <div class="gacha-draw-review-actions">
+                      <button id="gachaCloseReviewBtn" type="button" class="ghost-btn">
+                        Close
+                      </button>
+                      <button id="gachaAddToBinderBtn" type="button">
+                        Add to Binder
+                      </button>
+                    </div>
+                  </section>
                 </div>
               </section>
             </div>
@@ -301,6 +317,7 @@
         <div id="modalRevealInfo" class="modal-reveal-info" hidden>
           <p id="modalRevealCounter" class="modal-reveal-counter"></p>
           <p id="modalRevealRarity" class="modal-reveal-rarity"></p>
+          <button id="modalRevealSkipBtn" type="button" class="modal-reveal-skip">Open All</button>
         </div>
       </section>
     </div>
