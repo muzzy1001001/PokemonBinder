@@ -43,9 +43,9 @@
           <button
             class="sidebar-link"
             type="button"
-            data-view="dashboard"
+            data-view="binder"
             data-title="My Binder"
-            data-subtitle="Your full monitored collection, quantities, conditions, and notes."
+            data-subtitle="Track slots, duplicates, and progression by collection."
           >
             <span>My Binder</span>
           </button>
@@ -71,13 +71,91 @@
         </header>
 
         <section id="view-dashboard" class="view is-active" aria-label="Binder Dashboard">
+          <section class="panel panel-dashboard">
+            <div class="panel-heading">
+              <h2>Trainer Dashboard</h2>
+              <p>Quick look at your profile and collection performance.</p>
+            </div>
+
+            <div class="dashboard-grid">
+              <article class="dashboard-card dashboard-profile-card">
+                <h3>Profile</h3>
+                <button id="trainerAvatarBtn" type="button" class="trainer-avatar-btn" aria-label="Change profile photo">
+                  <span id="trainerAvatarInitial" class="trainer-avatar-initial">?</span>
+                  <img id="trainerAvatarImage" class="trainer-avatar-image" alt="Trainer profile" hidden />
+                </button>
+                <input id="trainerAvatarInput" type="file" accept="image/*" hidden />
+                <label>
+                  IGN
+                  <input id="trainerIgn" type="text" placeholder="In-game name" maxlength="30" />
+                </label>
+              </article>
+
+              <article class="dashboard-card dashboard-stat-card">
+                <h3>Cards Owned</h3>
+                <p id="dashboardCardsOwned" class="dashboard-stat-value">0</p>
+                <p id="dashboardUniqueOwned" class="dashboard-stat-sub">0 unique cards</p>
+              </article>
+
+              <article class="dashboard-card dashboard-stat-card">
+                <h3>Collection Net Worth</h3>
+                <p id="dashboardNetWorth" class="dashboard-stat-value">$0.00</p>
+                <p class="dashboard-stat-sub">Based on latest available sold/market values</p>
+              </article>
+
+              <article class="dashboard-card dashboard-stat-card">
+                <h3>God Packs Opened</h3>
+                <p id="dashboardGodPacks" class="dashboard-stat-value">0</p>
+                <p class="dashboard-stat-sub">Across all gacha sessions</p>
+              </article>
+            </div>
+
+            <section class="dashboard-top-showcase">
+              <div class="panel-heading panel-heading-compact">
+                <h3>Top 5 Best Binder Cards</h3>
+                <p id="dashboardTopMeta">Highest last sold value cards in your active binder.</p>
+              </div>
+              <div id="dashboardTopCards" class="dashboard-top-grid"></div>
+            </section>
+          </section>
+        </section>
+
+        <section id="view-binder" class="view" aria-label="My Binder">
           <section class="panel panel-binder">
             <div class="panel-heading">
               <h2>My Binder</h2>
-              <p id="binderStats">0 unique | 0 total cards</p>
+              <p id="binderStats">0 / 0 obtained | 0 total copies</p>
+            </div>
+
+            <div class="controls controls-binder-manager">
+              <label>
+                Active Binder
+                <select id="binderPicker"></select>
+              </label>
+
+              <button id="addBinderBtn" type="button">New Binder</button>
+              <button id="renameBinderBtn" type="button" class="ghost-btn">Rename</button>
+              <button id="deleteBinderBtn" type="button" class="ghost-btn">Delete</button>
+              <button id="clearBinder" type="button" class="ghost-btn">Clear Active Binder</button>
             </div>
 
             <div class="controls controls-binder">
+              <label>
+                Collection
+                <select id="binderCollectionPreset">
+                  <option value="all_set">All Cards (By Set)</option>
+                  <option value="pokemon_151">Pokemon 151</option>
+                  <option value="mega">Mega Evolutions</option>
+                </select>
+              </label>
+
+              <label>
+                Set
+                <select id="binderCollectionSet">
+                  <option value="">Choose a set</option>
+                </select>
+              </label>
+
               <label>
                 Search binder
                 <input
@@ -90,12 +168,12 @@
               <label>
                 Sort binder
                 <select id="binderSort">
-                  <option value="updated_desc">Recently Updated</option>
-                  <option value="updated_asc">Oldest Updated</option>
+                  <option value="number_asc">Card Number</option>
                   <option value="name_asc">Name A-Z</option>
                   <option value="name_desc">Name Z-A</option>
-                  <option value="qty_desc">Highest Quantity</option>
-                  <option value="set_asc">Set Name</option>
+                  <option value="value_desc">Highest Value</option>
+                  <option value="updated_desc">Recently Updated</option>
+                  <option value="date_obtained_desc">Newest Obtained</option>
                 </select>
               </label>
 
@@ -111,13 +189,9 @@
                   <option value="Damaged">Damaged</option>
                 </select>
               </label>
-
-              <button id="clearBinder" type="button" class="ghost-btn">
-                Clear Binder
-              </button>
             </div>
 
-            <div id="binderList" class="binder-list"></div>
+            <div id="binderList" class="binder-grid"></div>
           </section>
         </section>
 

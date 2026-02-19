@@ -1,5 +1,8 @@
 const STORAGE_KEY_BINDER = "myPokemonBinder";
+const STORAGE_KEY_BINDER_STATE = "pokemonBinderStateV2";
 const LEGACY_STORAGE_KEY_DECK = "myPokemonDeck";
+const DEFAULT_BINDER_NAME = "Main Binder";
+const COLLECTION_PRESET_OPTIONS = ["all_set", "pokemon_151", "mega"];
 const CONDITION_OPTIONS = [
   "Mint",
   "Near Mint",
@@ -12,7 +15,21 @@ const CONDITION_OPTIONS = [
 const state = {
   cards: [],
   sets: [],
+  binders: [],
+  activeBinderId: "",
   binder: [],
+  profile: {
+    name: "",
+    ign: "",
+    avatar: ""
+  },
+  binderCollection: {
+    preset: "all_set",
+    setId: "",
+    cards: [],
+    loading: false,
+    error: ""
+  },
   totalCount: 0,
   page: 1,
   pageSize: 24,
@@ -23,7 +40,7 @@ const state = {
   },
   binderQuery: {
     search: "",
-    sort: "updated_desc",
+    sort: "number_asc",
     condition: ""
   },
   gacha: {
@@ -63,7 +80,8 @@ const state = {
     firstFlipTimer: null,
     reviewVisible: false,
     pullsAddedToBinder: false,
-    rarestPullCardId: ""
+    rarestPullCardId: "",
+    godPacksOpened: 0
   }
 };
 
@@ -79,6 +97,23 @@ const el = {
   binderStats: document.getElementById("binderStats"),
   workspaceTitle: document.getElementById("workspaceTitle"),
   workspaceSubtitle: document.getElementById("workspaceSubtitle"),
+  trainerAvatarBtn: document.getElementById("trainerAvatarBtn"),
+  trainerAvatarImage: document.getElementById("trainerAvatarImage"),
+  trainerAvatarInitial: document.getElementById("trainerAvatarInitial"),
+  trainerAvatarInput: document.getElementById("trainerAvatarInput"),
+  trainerIgn: document.getElementById("trainerIgn"),
+  dashboardCardsOwned: document.getElementById("dashboardCardsOwned"),
+  dashboardUniqueOwned: document.getElementById("dashboardUniqueOwned"),
+  dashboardNetWorth: document.getElementById("dashboardNetWorth"),
+  dashboardGodPacks: document.getElementById("dashboardGodPacks"),
+  dashboardTopMeta: document.getElementById("dashboardTopMeta"),
+  dashboardTopCards: document.getElementById("dashboardTopCards"),
+  binderPicker: document.getElementById("binderPicker"),
+  addBinderBtn: document.getElementById("addBinderBtn"),
+  renameBinderBtn: document.getElementById("renameBinderBtn"),
+  deleteBinderBtn: document.getElementById("deleteBinderBtn"),
+  binderCollectionPreset: document.getElementById("binderCollectionPreset"),
+  binderCollectionSet: document.getElementById("binderCollectionSet"),
   binderSearch: document.getElementById("binderSearch"),
   binderSort: document.getElementById("binderSort"),
   binderCondition: document.getElementById("binderCondition"),
@@ -137,6 +172,12 @@ const tiltState = {
   deltaY: 0
 };
 
+const priceLookupState = {
+  byId: new Map(),
+  pendingIds: new Set(),
+  batchTimer: null
+};
+
 function toPositiveInt(value, fallback = 1) {
   const parsed = Number.parseInt(value, 10);
   if (Number.isNaN(parsed) || parsed <= 0) {
@@ -177,6 +218,8 @@ function normalizeBinderEntries(entries) {
       number: raw.number,
       supertype: raw.supertype,
       subtypes: raw.subtypes,
+      tcgplayer: raw.tcgplayer,
+      cardmarket: raw.cardmarket,
       notes: raw.notes || "",
       condition,
       ownedQty: normalizedQty,
@@ -198,30 +241,117 @@ function normalizeBinderEntries(entries) {
     if (existing.condition === "Near Mint" && baseEntry.condition !== "Near Mint") {
       existing.condition = baseEntry.condition;
     }
+    if (!existing.cardmarket && baseEntry.cardmarket) {
+      existing.cardmarket = baseEntry.cardmarket;
+    }
+    if (!existing.tcgplayer && baseEntry.tcgplayer) {
+      existing.tcgplayer = baseEntry.tcgplayer;
+    }
   }
 
   return [...byId.values()];
 }
 
-function loadBinder() {
+function generateBinderId() {
+  return `binder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createDefaultBinderRecord(name = DEFAULT_BINDER_NAME, entries = []) {
+  return {
+    id: generateBinderId(),
+    name,
+    entries: normalizeBinderEntries(entries)
+  };
+}
+
+function normalizeBinderRecord(raw, index) {
+  const fallbackName = index === 0 ? DEFAULT_BINDER_NAME : `Binder ${index + 1}`;
+  const name = String(raw?.name || fallbackName).trim() || fallbackName;
+  return {
+    id: raw?.id || generateBinderId(),
+    name,
+    entries: normalizeBinderEntries(raw?.entries)
+  };
+}
+
+function getActiveBinderRecord() {
+  return state.binders.find((binder) => binder.id === state.activeBinderId) || null;
+}
+
+function setActiveBinder(binderId) {
+  const target =
+    state.binders.find((binder) => binder.id === binderId) ||
+    state.binders[0] ||
+    createDefaultBinderRecord();
+
+  if (!state.binders.length) {
+    state.binders = [target];
+  }
+
+  state.activeBinderId = target.id;
+  state.binder = target.entries;
+}
+
+function loadBinderState() {
   try {
+    const stateRaw = localStorage.getItem(STORAGE_KEY_BINDER_STATE);
+    if (stateRaw) {
+      const parsed = JSON.parse(stateRaw);
+      const binders = Array.isArray(parsed?.binders)
+        ? parsed.binders.map((binder, index) => normalizeBinderRecord(binder, index))
+        : [];
+
+      state.binders = binders.length ? binders : [createDefaultBinderRecord()];
+      state.profile.name = String(parsed?.profile?.name || "").slice(0, 40);
+      state.profile.ign = String(parsed?.profile?.ign || "").slice(0, 30);
+      state.profile.avatar = String(parsed?.profile?.avatar || "");
+      state.gacha.godPacksOpened = Math.max(toPositiveInt(parsed?.godPacksOpened, 0), 0);
+      if (COLLECTION_PRESET_OPTIONS.includes(parsed?.binderCollection?.preset)) {
+        state.binderCollection.preset = parsed.binderCollection.preset;
+      }
+      state.binderCollection.setId = String(parsed?.binderCollection?.setId || "");
+      setActiveBinder(parsed?.activeBinderId || state.binders[0].id);
+      return;
+    }
+
     const binderRaw = localStorage.getItem(STORAGE_KEY_BINDER);
-    if (binderRaw) {
-      return normalizeBinderEntries(JSON.parse(binderRaw));
-    }
-
     const legacyRaw = localStorage.getItem(LEGACY_STORAGE_KEY_DECK);
-    if (!legacyRaw) {
-      return [];
-    }
+    const legacyEntries = binderRaw
+      ? normalizeBinderEntries(JSON.parse(binderRaw))
+      : legacyRaw
+        ? normalizeBinderEntries(JSON.parse(legacyRaw))
+        : [];
 
-    return normalizeBinderEntries(JSON.parse(legacyRaw));
+    state.binders = [createDefaultBinderRecord(DEFAULT_BINDER_NAME, legacyEntries)];
+    setActiveBinder(state.binders[0].id);
   } catch {
-    return [];
+    state.binders = [createDefaultBinderRecord()];
+    setActiveBinder(state.binders[0].id);
   }
 }
 
 function saveBinder() {
+  const active = getActiveBinderRecord();
+  if (active) {
+    active.entries = state.binder;
+  }
+
+  const payload = {
+    binders: state.binders,
+    activeBinderId: state.activeBinderId,
+    profile: {
+      name: state.profile.name,
+      ign: state.profile.ign,
+      avatar: state.profile.avatar
+    },
+    binderCollection: {
+      preset: state.binderCollection.preset,
+      setId: state.binderCollection.setId
+    },
+    godPacksOpened: state.gacha.godPacksOpened
+  };
+
+  localStorage.setItem(STORAGE_KEY_BINDER_STATE, JSON.stringify(payload));
   localStorage.setItem(STORAGE_KEY_BINDER, JSON.stringify(state.binder));
 }
 
@@ -463,6 +593,151 @@ function rarityGlowTier(rarity) {
   }
 
   return "base";
+}
+
+function toFiniteNumber(value) {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return 0;
+  }
+  return parsed;
+}
+
+function getCardMarketBaseValue(card) {
+  const cardId = card?.id;
+  const cardmarket = card?.cardmarket?.prices || {};
+  const tcgPrices = card?.tcgplayer?.prices || {};
+  const tcgCandidates = [];
+
+  for (const priceObj of Object.values(tcgPrices)) {
+    if (!priceObj || typeof priceObj !== "object") {
+      continue;
+    }
+    tcgCandidates.push(
+      toFiniteNumber(priceObj.market),
+      toFiniteNumber(priceObj.mid),
+      toFiniteNumber(priceObj.low)
+    );
+  }
+
+  const candidates = [
+    toFiniteNumber(cardmarket.trendPrice),
+    toFiniteNumber(cardmarket.averageSellPrice),
+    toFiniteNumber(cardmarket.avg1),
+    toFiniteNumber(cardmarket.avg7),
+    ...tcgCandidates
+  ].filter((value) => value > 0);
+
+  if (candidates.length) {
+    return candidates[0];
+  }
+
+  if (cardId && priceLookupState.byId.has(cardId)) {
+    return toFiniteNumber(priceLookupState.byId.get(cardId));
+  }
+
+  return 0;
+}
+
+async function fetchCardPrices(cardIds) {
+  const response = await fetch("/api/card-prices", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ ids: cardIds })
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not fetch card prices");
+  }
+
+  const payload = await response.json();
+  return payload?.prices || {};
+}
+
+function queueCardPriceLookup(cards) {
+  const queue = [];
+  for (const card of cards) {
+    const cardId = card?.id;
+    if (!cardId) {
+      continue;
+    }
+
+    const hasInlineValue = getCardMarketBaseValue({ ...card, id: "" }) > 0;
+    if (hasInlineValue) {
+      continue;
+    }
+
+    if (priceLookupState.byId.has(cardId) || priceLookupState.pendingIds.has(cardId)) {
+      continue;
+    }
+
+    queue.push(cardId);
+  }
+
+  if (!queue.length) {
+    return;
+  }
+
+  for (const cardId of queue) {
+    priceLookupState.pendingIds.add(cardId);
+  }
+
+  if (priceLookupState.batchTimer) {
+    return;
+  }
+
+  priceLookupState.batchTimer = window.setTimeout(async () => {
+    priceLookupState.batchTimer = null;
+    const ids = [...priceLookupState.pendingIds].slice(0, 120);
+    ids.forEach((id) => priceLookupState.pendingIds.delete(id));
+
+    try {
+      const prices = await fetchCardPrices(ids);
+      for (const id of ids) {
+        priceLookupState.byId.set(id, toFiniteNumber(prices[id]));
+      }
+    } catch {
+      for (const id of ids) {
+        priceLookupState.byId.set(id, 0);
+      }
+    }
+
+    renderDashboard();
+    renderBinder();
+  }, 90);
+}
+
+function getCardLastSoldValue(card) {
+  const value = getCardMarketBaseValue(card);
+  return toFiniteNumber(value);
+}
+
+function formatLastSoldValue(card) {
+  const value = getCardLastSoldValue(card);
+  if (value <= 0) {
+    return "Last sold: N/A";
+  }
+
+  return `Last sold: ${formatCurrency(value)}`;
+}
+
+function formatCurrency(value) {
+  return `$${toFiniteNumber(value).toFixed(2)}`;
+}
+
+function formatDate(value) {
+  const time = Number(value);
+  if (!Number.isFinite(time) || time <= 0) {
+    return "-";
+  }
+
+  return new Date(time).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric"
+  });
 }
 
 function getRarestPulledCardId(cards) {
@@ -920,6 +1195,13 @@ async function loadAndRenderGachaPreview(setId) {
 }
 
 function renderSetFilter() {
+  el.setFilter.innerHTML = "";
+
+  const allSetsOption = document.createElement("option");
+  allSetsOption.value = "";
+  allSetsOption.textContent = "All packs";
+  el.setFilter.appendChild(allSetsOption);
+
   const fragment = document.createDocumentFragment();
 
   for (const set of state.sets) {
@@ -930,6 +1212,332 @@ function renderSetFilter() {
   }
 
   el.setFilter.appendChild(fragment);
+  el.setFilter.value = state.query.setId || "";
+  renderCollectionSetOptions();
+}
+
+function renderCollectionSetOptions() {
+  if (!el.binderCollectionSet) {
+    return;
+  }
+
+  el.binderCollectionSet.innerHTML = "";
+
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Choose a set";
+  el.binderCollectionSet.appendChild(placeholder);
+
+  const fragment = document.createDocumentFragment();
+  for (const set of state.sets) {
+    const option = document.createElement("option");
+    option.value = set.id;
+    option.textContent = `${set.name} (${set.series || "Series"})`;
+    fragment.appendChild(option);
+  }
+  el.binderCollectionSet.appendChild(fragment);
+
+  if (!state.binderCollection.setId && state.sets[0]) {
+    state.binderCollection.setId = state.sets[0].id;
+  }
+
+  const hasSelectedSet = state.sets.some((set) => set.id === state.binderCollection.setId);
+  if (!hasSelectedSet) {
+    state.binderCollection.setId = state.sets[0]?.id || "";
+  }
+
+  el.binderCollectionSet.value = state.binderCollection.setId || "";
+  const useSetPicker = state.binderCollection.preset === "all_set";
+  el.binderCollectionSet.disabled = !useSetPicker;
+}
+
+function renderBinderPicker() {
+  if (!el.binderPicker) {
+    return;
+  }
+
+  el.binderPicker.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  for (const binder of state.binders) {
+    const option = document.createElement("option");
+    option.value = binder.id;
+    option.textContent = binder.name;
+    if (binder.id === state.activeBinderId) {
+      option.selected = true;
+    }
+    fragment.appendChild(option);
+  }
+
+  el.binderPicker.appendChild(fragment);
+
+  if (el.deleteBinderBtn) {
+    el.deleteBinderBtn.disabled = state.binders.length <= 1;
+  }
+}
+
+function addNewBinder() {
+  const input = window.prompt("New binder name", `Binder ${state.binders.length + 1}`);
+  if (input === null) {
+    return;
+  }
+
+  const name = input.trim().slice(0, 40);
+  if (!name) {
+    return;
+  }
+
+  const binder = createDefaultBinderRecord(name);
+  state.binders.push(binder);
+  setActiveBinder(binder.id);
+  saveBinder();
+  renderBinderPicker();
+  renderBinder();
+}
+
+function renameActiveBinder() {
+  const active = getActiveBinderRecord();
+  if (!active) {
+    return;
+  }
+
+  const input = window.prompt("Rename binder", active.name);
+  if (input === null) {
+    return;
+  }
+
+  const name = input.trim().slice(0, 40);
+  if (!name) {
+    return;
+  }
+
+  active.name = name;
+  saveBinder();
+  renderBinderPicker();
+  renderBinder();
+}
+
+function deleteActiveBinder() {
+  const active = getActiveBinderRecord();
+  if (!active || state.binders.length <= 1) {
+    return;
+  }
+
+  if (!window.confirm(`Delete binder \"${active.name}\"?`)) {
+    return;
+  }
+
+  state.binders = state.binders.filter((binder) => binder.id !== active.id);
+  setActiveBinder(state.binders[0]?.id || "");
+  saveBinder();
+  renderBinderPicker();
+  renderBinder();
+}
+
+async function fetchAllCollectionCards({ search = "", setId = "", sort = "name_asc" }) {
+  const pageSize = 40;
+  let page = 1;
+  let totalCount = Infinity;
+  const cards = [];
+
+  while (cards.length < totalCount) {
+    const params = new URLSearchParams({
+      search,
+      setId,
+      sort,
+      page: String(page),
+      pageSize: String(pageSize)
+    });
+
+    const response = await fetch(`/api/cards?${params.toString()}`);
+    if (!response.ok) {
+      throw new Error("Could not load collection cards");
+    }
+
+    const payload = await response.json();
+    const pageCards = payload.cards || [];
+    totalCount = payload.totalCount || pageCards.length;
+    cards.push(...pageCards);
+
+    if (!pageCards.length) {
+      break;
+    }
+
+    page += 1;
+    if (page > 80) {
+      break;
+    }
+  }
+
+  return cards;
+}
+
+async function loadBinderCollectionCards() {
+  state.binderCollection.loading = true;
+  state.binderCollection.error = "";
+  renderBinder();
+
+  try {
+    const preset = COLLECTION_PRESET_OPTIONS.includes(state.binderCollection.preset)
+      ? state.binderCollection.preset
+      : "all_set";
+    state.binderCollection.preset = preset;
+
+    let cards = [];
+
+    if (preset === "all_set") {
+      if (!state.binderCollection.setId) {
+        state.binderCollection.cards = [];
+        state.binderCollection.loading = false;
+        renderBinder();
+        return;
+      }
+
+      cards = await fetchAllCollectionCards({
+        setId: state.binderCollection.setId,
+        sort: "name_asc"
+      });
+    } else if (preset === "pokemon_151") {
+      const set151 = state.sets.find((set) => (set.name || "").toLowerCase().includes("151"));
+      if (!set151) {
+        state.binderCollection.cards = [];
+        state.binderCollection.error = "Pokemon 151 set is unavailable in this data source.";
+        state.binderCollection.loading = false;
+        renderBinder();
+        return;
+      }
+
+      cards = await fetchAllCollectionCards({
+        setId: set151.id,
+        sort: "name_asc"
+      });
+    } else {
+      const allMegaMatches = await fetchAllCollectionCards({
+        search: "mega",
+        sort: "name_asc"
+      });
+      cards = allMegaMatches.filter((card) => {
+        const name = String(card.name || "").toLowerCase();
+        const subtypes = Array.isArray(card.subtypes)
+          ? card.subtypes.map((item) => String(item).toLowerCase())
+          : [];
+        return name.startsWith("mega ") || subtypes.includes("mega");
+      });
+    }
+
+    const uniqueCards = new Map();
+    for (const card of cards) {
+      if (card?.id && !uniqueCards.has(card.id)) {
+        uniqueCards.set(card.id, card);
+      }
+    }
+
+    state.binderCollection.cards = [...uniqueCards.values()];
+  } catch (error) {
+    state.binderCollection.cards = [];
+    state.binderCollection.error = error.message || "Unable to load binder collection.";
+  } finally {
+    state.binderCollection.loading = false;
+    renderBinder();
+  }
+}
+
+function renderDashboard() {
+  if (!el.dashboardCardsOwned) {
+    return;
+  }
+
+  const uniqueOwned = state.binder.length;
+  const totalCopies = state.binder.reduce(
+    (sum, entry) => sum + toPositiveInt(entry.ownedQty, 1),
+    0
+  );
+  const netWorth = state.binder.reduce((sum, entry) => {
+    const qty = toPositiveInt(entry.ownedQty, 1);
+    return sum + getCardLastSoldValue(entry) * qty;
+  }, 0);
+
+  el.dashboardCardsOwned.textContent = String(totalCopies);
+  el.dashboardUniqueOwned.textContent = `${uniqueOwned} unique card${uniqueOwned === 1 ? "" : "s"}`;
+  el.dashboardNetWorth.textContent = formatCurrency(netWorth);
+  el.dashboardGodPacks.textContent = String(state.gacha.godPacksOpened);
+
+  if (el.dashboardTopMeta) {
+    const active = getActiveBinderRecord();
+    el.dashboardTopMeta.textContent = active
+      ? `Highest last sold value cards in ${active.name}.`
+      : "Highest last sold value cards in your active binder.";
+  }
+
+  if (el.trainerIgn && el.trainerIgn.value !== state.profile.ign) {
+    el.trainerIgn.value = state.profile.ign;
+  }
+  renderTrainerAvatar();
+
+  if (!el.dashboardTopCards) {
+    return;
+  }
+
+  el.dashboardTopCards.innerHTML = "";
+  queueCardPriceLookup(state.binder.slice(0, 120));
+  const topCards = [...state.binder]
+    .sort((left, right) => getCardLastSoldValue(right) - getCardLastSoldValue(left))
+    .slice(0, 5);
+
+  if (!topCards.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No cards in this binder yet.";
+    el.dashboardTopCards.appendChild(empty);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  for (const card of topCards) {
+    const article = document.createElement("article");
+    article.className = "dashboard-top-card";
+
+    const image = document.createElement("img");
+    image.src = card.images?.small || "";
+    image.alt = `${card.name} top card`;
+    article.appendChild(image);
+
+    const name = document.createElement("h4");
+    name.textContent = card.name;
+    article.appendChild(name);
+
+    const meta = document.createElement("p");
+    meta.textContent = `${card.set?.name || "Set"} | ${card.rarity || "Unknown"}`;
+    article.appendChild(meta);
+
+    const value = document.createElement("p");
+    value.className = "dashboard-top-value";
+    value.textContent = formatLastSoldValue(card);
+    article.appendChild(value);
+
+    fragment.appendChild(article);
+  }
+
+  el.dashboardTopCards.appendChild(fragment);
+}
+
+function renderTrainerAvatar() {
+  if (!el.trainerAvatarImage || !el.trainerAvatarInitial) {
+    return;
+  }
+
+  const hasAvatar = Boolean(state.profile.avatar);
+  if (hasAvatar) {
+    el.trainerAvatarImage.src = state.profile.avatar;
+    el.trainerAvatarImage.hidden = false;
+    el.trainerAvatarInitial.hidden = true;
+    return;
+  }
+
+  el.trainerAvatarImage.hidden = true;
+  el.trainerAvatarImage.removeAttribute("src");
+  const ignInitial = String(state.profile.ign || "").trim().charAt(0).toUpperCase();
+  el.trainerAvatarInitial.textContent = ignInitial || "?";
+  el.trainerAvatarInitial.hidden = false;
 }
 
 function upsertBinderCard(card, quantity = 1) {
@@ -942,6 +1550,12 @@ function upsertBinderCard(card, quantity = 1) {
       toPositiveInt(existing.ownedQty, 1) + amount
     );
     existing.updatedAt = Date.now();
+    if (!existing.cardmarket && card.cardmarket) {
+      existing.cardmarket = card.cardmarket;
+    }
+    if (!existing.tcgplayer && card.tcgplayer) {
+      existing.tcgplayer = card.tcgplayer;
+    }
     return;
   }
 
@@ -956,6 +1570,8 @@ function upsertBinderCard(card, quantity = 1) {
     number: card.number,
     supertype: card.supertype,
     subtypes: card.subtypes,
+    tcgplayer: card.tcgplayer,
+    cardmarket: card.cardmarket,
     condition: "Near Mint",
     notes: "",
     ownedQty: Math.min(99, amount),
@@ -2295,6 +2911,11 @@ function startGachaReveal(payload) {
   state.gacha.firstFlipAnimating = false;
   state.gacha.lastPulls = payload.pulls || [];
   state.gacha.lastPackCount = toPositiveInt(payload.packCount, 1);
+  const godPackHits = state.gacha.lastPulls.filter((packPull) => packPull.godPack).length;
+  if (godPackHits > 0) {
+    state.gacha.godPacksOpened += godPackHits;
+    saveBinder();
+  }
   state.gacha.revealSetName = payload.set?.name || "Set";
   state.gacha.revealQueue = buildGachaRevealQueue(state.gacha.lastPulls);
   state.gacha.rarestPullCardId = getRarestPulledCardId(state.gacha.revealQueue.map((item) => item.card));
@@ -2414,38 +3035,167 @@ function getFilteredBinder() {
   const search = state.binderQuery.search.trim().toLowerCase();
   const conditionFilter = state.binderQuery.condition;
 
-  const filtered = state.binder.filter((entry) => {
+  const filtered = state.binderCollection.cards.filter((card) => {
+    const entry = getBinderEntry(card.id);
     const textMatches =
       !search ||
-      entry.name.toLowerCase().includes(search) ||
-      (entry.set?.name || "").toLowerCase().includes(search) ||
-      (entry.notes || "").toLowerCase().includes(search);
+      String(card.name || "").toLowerCase().includes(search) ||
+      String(card.set?.name || "").toLowerCase().includes(search) ||
+      String(card.number || "").toLowerCase().includes(search) ||
+      String(entry?.notes || "").toLowerCase().includes(search);
 
     const conditionMatches =
-      !conditionFilter || entry.condition === conditionFilter;
+      !conditionFilter || (entry && entry.condition === conditionFilter);
 
     return textMatches && conditionMatches;
   });
 
+  const parseCardNumber = (value) => {
+    const raw = String(value || "");
+    const numeric = Number.parseInt(raw.match(/\d+/)?.[0] || "0", 10);
+    return Number.isFinite(numeric) ? numeric : 0;
+  };
+
   filtered.sort((left, right) => {
+    const leftEntry = getBinderEntry(left.id);
+    const rightEntry = getBinderEntry(right.id);
+
     switch (state.binderQuery.sort) {
-      case "updated_asc":
-        return (left.updatedAt || 0) - (right.updatedAt || 0);
       case "name_asc":
         return left.name.localeCompare(right.name);
       case "name_desc":
         return right.name.localeCompare(left.name);
-      case "qty_desc":
-        return toPositiveInt(right.ownedQty, 1) - toPositiveInt(left.ownedQty, 1);
-      case "set_asc":
-        return (left.set?.name || "").localeCompare(right.set?.name || "");
+      case "value_desc":
+        return getCardLastSoldValue(right) - getCardLastSoldValue(left);
       case "updated_desc":
+        return (rightEntry?.updatedAt || 0) - (leftEntry?.updatedAt || 0);
+      case "date_obtained_desc":
+        return (rightEntry?.addedAt || 0) - (leftEntry?.addedAt || 0);
+      case "number_asc":
       default:
-        return (right.updatedAt || 0) - (left.updatedAt || 0);
+        return parseCardNumber(left.number) - parseCardNumber(right.number);
     }
   });
 
   return filtered;
+}
+
+function createBinderItem(card, entry) {
+  const item = document.createElement("article");
+  item.className = "binder-slot";
+  item.classList.toggle("is-obtained", Boolean(entry));
+  item.classList.toggle("is-unobtained", !entry);
+
+  item.addEventListener("click", (event) => {
+    if (event.target.closest("button, input, select, textarea")) {
+      return;
+    }
+    openCardModal(card);
+  });
+
+  if (entry && toPositiveInt(entry.ownedQty, 1) > 1) {
+    const dupe = document.createElement("span");
+    dupe.className = "binder-slot-dupe";
+    dupe.textContent = `x${toPositiveInt(entry.ownedQty, 1)}`;
+    item.appendChild(dupe);
+  }
+
+  const numberBadge = document.createElement("span");
+  numberBadge.className = "binder-slot-number";
+  numberBadge.textContent = `#${card.number || "?"}`;
+  item.appendChild(numberBadge);
+
+  const imageWrap = document.createElement("div");
+  imageWrap.className = "binder-slot-image-wrap";
+
+  const image = document.createElement("img");
+  image.src = card.images?.small || "";
+  image.alt = `${card.name} card`;
+  imageWrap.appendChild(image);
+  item.appendChild(imageWrap);
+
+  const meta = document.createElement("div");
+  meta.className = "binder-slot-meta";
+
+  const title = document.createElement("h4");
+  title.textContent = card.name;
+  meta.appendChild(title);
+
+  const lineOne = document.createElement("p");
+  lineOne.textContent = `${card.set?.name || "Unknown set"} | ${card.rarity || "Unknown rarity"}`;
+  meta.appendChild(lineOne);
+
+  const lineTwo = document.createElement("p");
+  lineTwo.textContent = entry
+    ? `Obtained: ${formatDate(entry.addedAt)} | Condition: ${entry.condition}`
+    : "Unobtained slot";
+  meta.appendChild(lineTwo);
+
+  const valueLine = document.createElement("p");
+  valueLine.className = "binder-slot-value";
+  valueLine.textContent = formatLastSoldValue(card);
+  meta.appendChild(valueLine);
+
+  const actions = document.createElement("div");
+  actions.className = "binder-slot-actions";
+
+  if (entry) {
+    const qty = document.createElement("span");
+    qty.className = "binder-slot-qty";
+    qty.textContent = `Copies owned: ${toPositiveInt(entry.ownedQty, 1)}`;
+    actions.appendChild(qty);
+    meta.appendChild(actions);
+  }
+
+  item.appendChild(meta);
+
+  return item;
+}
+
+function renderBinder() {
+  const visibleCards = getFilteredBinder();
+  el.binderList.innerHTML = "";
+  queueCardPriceLookup(visibleCards.slice(0, 140));
+
+  if (state.binderCollection.loading) {
+    const loading = document.createElement("div");
+    loading.className = "empty-state";
+    loading.textContent = "Loading collection cards...";
+    el.binderList.appendChild(loading);
+  } else if (state.binderCollection.error) {
+    const error = document.createElement("div");
+    error.className = "empty-state";
+    error.textContent = state.binderCollection.error;
+    el.binderList.appendChild(error);
+  } else if (!state.binderCollection.cards.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No cards found for this collection preset.";
+    el.binderList.appendChild(empty);
+  } else if (!visibleCards.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No cards match your binder filters.";
+    el.binderList.appendChild(empty);
+  } else {
+    const fragment = document.createDocumentFragment();
+    for (const card of visibleCards) {
+      const entry = getBinderEntry(card.id);
+      fragment.appendChild(createBinderItem(card, entry));
+    }
+    el.binderList.appendChild(fragment);
+  }
+
+  const ownedInCollection = state.binderCollection.cards.filter((card) => getBinderEntry(card.id)).length;
+  const totalSlots = state.binderCollection.cards.length;
+  const totalCopies = state.binder.reduce(
+    (sum, entry) => sum + toPositiveInt(entry.ownedQty, 1),
+    0
+  );
+  const active = getActiveBinderRecord();
+  el.binderStats.textContent = `${ownedInCollection} / ${totalSlots} obtained | ${totalCopies} total copies${active ? ` | ${active.name}` : ""}`;
+
+  renderDashboard();
 }
 
 function removeBinderEntry(cardId) {
@@ -2497,147 +3247,7 @@ function updateBinderNotes(cardId, notes) {
   saveBinder();
 }
 
-function createBinderItem(entry) {
-  const item = document.createElement("article");
-  item.className = "binder-item";
-
-  item.addEventListener("click", (event) => {
-    if (event.target.closest("button, input, select, textarea")) {
-      return;
-    }
-    openCardModal(entry);
-  });
-
-  const image = document.createElement("img");
-  image.src = entry.images?.small || "";
-  image.alt = `${entry.name} card`;
-  item.appendChild(image);
-
-  const main = document.createElement("div");
-  main.className = "binder-main";
-
-  const title = document.createElement("h4");
-  title.textContent = entry.name;
-  main.appendChild(title);
-
-  const lineOne = document.createElement("p");
-  lineOne.textContent = `${entry.set?.name || "Unknown pack"} | #${entry.number || "?"} | ${entry.rarity || "Unknown rarity"}`;
-  main.appendChild(lineOne);
-
-  const lineTwo = document.createElement("p");
-  lineTwo.textContent = `Owned: ${toPositiveInt(entry.ownedQty, 1)} | Condition: ${entry.condition}`;
-  main.appendChild(lineTwo);
-
-  const lineThree = document.createElement("p");
-  lineThree.textContent = `From: ${formatPack(entry)}`;
-  main.appendChild(lineThree);
-
-  const actions = document.createElement("div");
-  actions.className = "binder-actions";
-
-  const qtyControl = document.createElement("div");
-  qtyControl.className = "qty-control";
-
-  const minusBtn = document.createElement("button");
-  minusBtn.type = "button";
-  minusBtn.textContent = "-";
-  minusBtn.addEventListener("click", () => {
-    updateBinderQuantity(entry.id, toPositiveInt(entry.ownedQty, 1) - 1);
-  });
-  qtyControl.appendChild(minusBtn);
-
-  const qtyInput = document.createElement("input");
-  qtyInput.type = "number";
-  qtyInput.min = "1";
-  qtyInput.max = "99";
-  qtyInput.value = String(toPositiveInt(entry.ownedQty, 1));
-  qtyInput.addEventListener("change", () => {
-    updateBinderQuantity(entry.id, qtyInput.value);
-  });
-  qtyControl.appendChild(qtyInput);
-
-  const plusBtn = document.createElement("button");
-  plusBtn.type = "button";
-  plusBtn.textContent = "+";
-  plusBtn.addEventListener("click", () => {
-    updateBinderQuantity(entry.id, toPositiveInt(entry.ownedQty, 1) + 1);
-  });
-  qtyControl.appendChild(plusBtn);
-
-  actions.appendChild(qtyControl);
-
-  const conditionSelect = document.createElement("select");
-  conditionSelect.className = "condition-select";
-  for (const optionLabel of CONDITION_OPTIONS) {
-    const option = document.createElement("option");
-    option.value = optionLabel;
-    option.textContent = optionLabel;
-    if (optionLabel === entry.condition) {
-      option.selected = true;
-    }
-    conditionSelect.appendChild(option);
-  }
-
-  conditionSelect.addEventListener("change", () => {
-    updateBinderCondition(entry.id, conditionSelect.value);
-  });
-
-  actions.appendChild(conditionSelect);
-
-  const removeButton = document.createElement("button");
-  removeButton.type = "button";
-  removeButton.className = "remove-btn";
-  removeButton.textContent = "Remove";
-  removeButton.addEventListener("click", () => {
-    removeBinderEntry(entry.id);
-  });
-  actions.appendChild(removeButton);
-
-  main.appendChild(actions);
-
-  const notes = document.createElement("textarea");
-  notes.className = "binder-notes";
-  notes.placeholder = "Notes (binder slot, trade status, grading plans...)";
-  notes.value = entry.notes || "";
-  notes.addEventListener("change", () => {
-    updateBinderNotes(entry.id, notes.value);
-    renderBinder();
-  });
-  notes.addEventListener("blur", () => {
-    updateBinderNotes(entry.id, notes.value);
-  });
-  main.appendChild(notes);
-
-  item.appendChild(main);
-  return item;
-}
-
-function renderBinder() {
-  const visibleEntries = getFilteredBinder();
-  el.binderList.innerHTML = "";
-
-  if (!visibleEntries.length) {
-    const empty = document.createElement("div");
-    empty.className = "empty-state";
-    const message = document.createElement("p");
-    message.textContent =
-      "Your binder is empty for this filter. Add cards from Card Finder.";
-    empty.appendChild(message);
-    el.binderList.appendChild(empty);
-  } else {
-    const fragment = document.createDocumentFragment();
-    for (const entry of visibleEntries) {
-      fragment.appendChild(createBinderItem(entry));
-    }
-    el.binderList.appendChild(fragment);
-  }
-
-  const totalCopies = state.binder.reduce(
-    (sum, entry) => sum + toPositiveInt(entry.ownedQty, 1),
-    0
-  );
-  el.binderStats.textContent = `${state.binder.length} unique | ${totalCopies} total cards`;
-}
+/* legacy binder list renderer removed */
 
 async function refreshCards() {
   el.resultMeta.textContent = "Loading cards...";
@@ -2834,6 +3444,84 @@ function attachEvents() {
     refreshCards();
   });
 
+  if (el.trainerAvatarBtn && el.trainerAvatarInput) {
+    el.trainerAvatarBtn.addEventListener("click", () => {
+      el.trainerAvatarInput.click();
+    });
+  }
+
+  if (el.trainerAvatarInput) {
+    el.trainerAvatarInput.addEventListener("change", (event) => {
+      const file = event.target.files?.[0];
+      if (!file) {
+        return;
+      }
+
+      if (!file.type.startsWith("image/")) {
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        state.profile.avatar = String(reader.result || "");
+        saveBinder();
+        renderDashboard();
+      };
+      reader.readAsDataURL(file);
+      event.target.value = "";
+    });
+  }
+
+  if (el.trainerIgn) {
+    el.trainerIgn.addEventListener("input", (event) => {
+      state.profile.ign = String(event.target.value || "").slice(0, 30);
+      saveBinder();
+      renderDashboard();
+    });
+  }
+
+  if (el.binderPicker) {
+    el.binderPicker.addEventListener("change", (event) => {
+      setActiveBinder(event.target.value);
+      saveBinder();
+      renderBinderPicker();
+      renderBinder();
+    });
+  }
+
+  if (el.addBinderBtn) {
+    el.addBinderBtn.addEventListener("click", () => {
+      addNewBinder();
+    });
+  }
+
+  if (el.renameBinderBtn) {
+    el.renameBinderBtn.addEventListener("click", () => {
+      renameActiveBinder();
+    });
+  }
+
+  if (el.deleteBinderBtn) {
+    el.deleteBinderBtn.addEventListener("click", () => {
+      deleteActiveBinder();
+    });
+  }
+
+  if (el.binderCollectionPreset) {
+    el.binderCollectionPreset.addEventListener("change", (event) => {
+      state.binderCollection.preset = event.target.value;
+      renderCollectionSetOptions();
+      void loadBinderCollectionCards();
+    });
+  }
+
+  if (el.binderCollectionSet) {
+    el.binderCollectionSet.addEventListener("change", (event) => {
+      state.binderCollection.setId = event.target.value;
+      void loadBinderCollectionCards();
+    });
+  }
+
   el.binderSearch.addEventListener("input", (event) => {
     state.binderQuery.search = event.target.value;
     renderBinder();
@@ -2887,7 +3575,7 @@ function attachEvents() {
       return;
     }
 
-    if (!window.confirm("Clear your entire binder collection?")) {
+    if (!window.confirm("Clear all cards from the active binder?")) {
       return;
     }
 
@@ -2899,13 +3587,19 @@ function attachEvents() {
 }
 
 async function initialize() {
-  state.binder = loadBinder();
+  loadBinderState();
   state.gacha.packCount = 1;
   attachEvents();
   updateGachaInfoVisibility();
   hideGachaDrawReview();
   updateAddToBinderButtonState();
   updateGachaBounceLabel();
+  renderBinderPicker();
+  renderDashboard();
+
+  if (el.binderCollectionPreset) {
+    el.binderCollectionPreset.value = state.binderCollection.preset;
+  }
 
   const defaultLink =
     sidebarLinks.find((link) => link.classList.contains("is-active")) ||
@@ -2923,12 +3617,21 @@ async function initialize() {
   try {
     await fetchSets();
     renderSetFilter();
+    if (state.binderCollection.preset === "all_set" && !state.binderCollection.setId && state.sets[0]) {
+      state.binderCollection.setId = state.sets[0].id;
+    }
   } catch {
     const fallbackOption = document.createElement("option");
     fallbackOption.value = "";
     fallbackOption.textContent = "Sets unavailable";
     el.setFilter.appendChild(fallbackOption);
   }
+
+  if (el.binderCollectionPreset) {
+    el.binderCollectionPreset.value = state.binderCollection.preset;
+  }
+  renderCollectionSetOptions();
+  void loadBinderCollectionCards();
 
   try {
     await fetchGachaPacks();

@@ -34,6 +34,9 @@ const GACHA_MAX_PACKS = 8;
 const GACHA_GOD_PACK_CHANCE = 0.0075;
 const BOOSTER_ART_PAGE_URL = "https://pokesymbols.com/tcg/booster-pack-art";
 const BOOSTER_ART_ORIGIN = "https://pokesymbols.com";
+const EBAY_SEARCH_URL = "https://www.ebay.com/sch/i.html";
+const EBAY_BROWSE_API_URL = "https://api.ebay.com/buy/browse/v1/item_summary/search";
+const EBAY_OAUTH_TOKEN = process.env.EBAY_OAUTH_TOKEN || "";
 
 const tcgClient = axios.create({
   baseURL: POKEMON_TCG_BASE_URL,
@@ -47,7 +50,8 @@ const localDataCache = {
   loaded: false,
   loadingPromise: null,
   sets: [],
-  cards: []
+  cards: [],
+  cardsById: new Map()
 };
 
 const boosterArtCache = {
@@ -55,6 +59,10 @@ const boosterArtCache = {
   loadingPromise: null,
   bySetNameKey: new Map()
 };
+
+const lastSoldCache = new Map();
+let lastSoldApiCooldownUntil = 0;
+let ebayLookupBlockedUntil = 0;
 
 app.use(express.json());
 
@@ -80,6 +88,17 @@ function sanitizeSetId(value) {
     .slice(0, 20);
 }
 
+function sanitizeCardId(value) {
+  if (!value) {
+    return "";
+  }
+
+  return String(value)
+    .trim()
+    .replace(/[^a-zA-Z0-9\-]/g, "")
+    .slice(0, 40);
+}
+
 function normalizeText(value) {
   return String(value || "")
     .normalize("NFD")
@@ -99,6 +118,260 @@ function parseDate(value) {
 function hpValue(card) {
   const value = Number.parseInt(card.hp || "", 10);
   return Number.isNaN(value) ? -1 : value;
+}
+
+function extractLastSoldValue(card) {
+  if (!card || typeof card !== "object") {
+    return 0;
+  }
+
+  const candidates = [];
+  const tcgPrices = card.tcgplayer?.prices || {};
+
+  for (const variant of Object.values(tcgPrices)) {
+    if (!variant || typeof variant !== "object") {
+      continue;
+    }
+
+    const market = Number.parseFloat(variant.market);
+    const mid = Number.parseFloat(variant.mid);
+    const low = Number.parseFloat(variant.low);
+
+    if (Number.isFinite(market) && market > 0) {
+      candidates.push(market);
+    }
+    if (Number.isFinite(mid) && mid > 0) {
+      candidates.push(mid);
+    }
+    if (Number.isFinite(low) && low > 0) {
+      candidates.push(low);
+    }
+  }
+
+  const cardmarket = card.cardmarket?.prices || {};
+  const trend = Number.parseFloat(cardmarket.trendPrice);
+  const averageSellPrice = Number.parseFloat(cardmarket.averageSellPrice);
+  const avg1 = Number.parseFloat(cardmarket.avg1);
+  const avg7 = Number.parseFloat(cardmarket.avg7);
+
+  if (Number.isFinite(trend) && trend > 0) {
+    candidates.push(trend);
+  }
+  if (Number.isFinite(averageSellPrice) && averageSellPrice > 0) {
+    candidates.push(averageSellPrice);
+  }
+  if (Number.isFinite(avg1) && avg1 > 0) {
+    candidates.push(avg1);
+  }
+  if (Number.isFinite(avg7) && avg7 > 0) {
+    candidates.push(avg7);
+  }
+
+  return candidates.length ? candidates[0] : 0;
+}
+
+function buildEbaySearchQuery(card) {
+  if (!card) {
+    return "";
+  }
+
+  const parts = [
+    card.name,
+    card.number,
+    card.set?.name,
+    "pokemon",
+    "psa 10"
+  ]
+    .filter(Boolean)
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+
+  return parts.join(" ").slice(0, 120);
+}
+
+async function fetchEbayLastSoldValueViaApi(card) {
+  if (!EBAY_OAUTH_TOKEN) {
+    return 0;
+  }
+
+  const query = buildEbaySearchQuery(card);
+  if (!query) {
+    return 0;
+  }
+
+  try {
+    const response = await axios.get(EBAY_BROWSE_API_URL, {
+      timeout: 12000,
+      headers: {
+        Authorization: `Bearer ${EBAY_OAUTH_TOKEN}`,
+        "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"
+      },
+      params: {
+        q: query,
+        filter: "soldItems:{true}",
+        limit: 12,
+        sort: "-price"
+      }
+    });
+
+    const items = Array.isArray(response.data?.itemSummaries)
+      ? response.data.itemSummaries
+      : [];
+    const prices = items
+      .map((item) => Number.parseFloat(item?.price?.value))
+      .filter((value) => Number.isFinite(value) && value > 0 && value < 100000);
+
+    return median(prices);
+  } catch {
+    return 0;
+  }
+}
+
+function parseEbayPricesFromHtml(html) {
+  if (!html) {
+    return [];
+  }
+
+  const prices = [];
+  const itemPriceRegex = /s-item__price[^>]*>\s*(?:US\s*)?\$([0-9][0-9,]*(?:\.[0-9]{2})?)/gi;
+  let match = itemPriceRegex.exec(html);
+
+  while (match) {
+    const value = Number.parseFloat(match[1].replace(/,/g, ""));
+    if (Number.isFinite(value) && value >= 2 && value <= 100000) {
+      prices.push(value);
+    }
+    match = itemPriceRegex.exec(html);
+  }
+
+  if (prices.length) {
+    return prices;
+  }
+
+  const fallbackRegex = /\$([0-9][0-9,]*(?:\.[0-9]{2})?)/g;
+  let fallbackMatch = fallbackRegex.exec(html);
+  while (fallbackMatch) {
+    const value = Number.parseFloat(fallbackMatch[1].replace(/,/g, ""));
+    if (Number.isFinite(value) && value >= 2 && value <= 100000) {
+      prices.push(value);
+    }
+    fallbackMatch = fallbackRegex.exec(html);
+  }
+
+  return prices;
+}
+
+function median(values) {
+  if (!values.length) {
+    return 0;
+  }
+
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return (sorted[middle - 1] + sorted[middle]) / 2;
+  }
+
+  return sorted[middle];
+}
+
+async function fetchEbayLastSoldValue(card) {
+  if (Date.now() < ebayLookupBlockedUntil) {
+    return 0;
+  }
+
+  const query = buildEbaySearchQuery(card);
+  if (!query) {
+    return 0;
+  }
+
+  try {
+    const response = await axios.get(EBAY_SEARCH_URL, {
+      timeout: 12000,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+      },
+      params: {
+        _nkw: query,
+        LH_Sold: 1,
+        LH_Complete: 1,
+        _sop: 13
+      }
+    });
+
+    const html = String(response.data || "");
+    if (
+      html.includes("Pardon Our Interruption") ||
+      html.includes("ChallengeGet") ||
+      html.includes("_challenge")
+    ) {
+      ebayLookupBlockedUntil = Date.now() + 15 * 60 * 1000;
+      return 0;
+    }
+
+    const prices = parseEbayPricesFromHtml(html).slice(0, 18);
+    return median(prices);
+  } catch {
+    ebayLookupBlockedUntil = Date.now() + 5 * 60 * 1000;
+    return 0;
+  }
+}
+
+async function resolveLastSoldValue(cardId) {
+  const sanitizedId = sanitizeCardId(cardId);
+  if (!sanitizedId) {
+    return 0;
+  }
+
+  if (lastSoldCache.has(sanitizedId)) {
+    return lastSoldCache.get(sanitizedId) || 0;
+  }
+
+  let cardForLookup = null;
+
+  if (localDataCache.loaded) {
+    const localCard = localDataCache.cardsById.get(sanitizedId);
+    cardForLookup = localCard || cardForLookup;
+    const localValue = extractLastSoldValue(localCard);
+    if (localValue > 0) {
+      lastSoldCache.set(sanitizedId, localValue);
+      return localValue;
+    }
+  }
+
+  if (Date.now() < lastSoldApiCooldownUntil) {
+    lastSoldCache.set(sanitizedId, 0);
+    return 0;
+  }
+
+  try {
+    const response = await tcgClient.get(`/cards/${encodeURIComponent(sanitizedId)}`, {
+      params: {
+        select: "id,name,number,set,tcgplayer,cardmarket"
+      }
+    });
+
+    const fetchedCard = response.data?.data || null;
+    cardForLookup = fetchedCard || cardForLookup;
+    const value = extractLastSoldValue(fetchedCard);
+    if (value > 0) {
+      lastSoldCache.set(sanitizedId, value);
+      return value;
+    }
+  } catch {
+    lastSoldApiCooldownUntil = Date.now() + 60000;
+  }
+
+  const ebayApiValue = await fetchEbayLastSoldValueViaApi(cardForLookup);
+  if (ebayApiValue > 0) {
+    lastSoldCache.set(sanitizedId, ebayApiValue);
+    return ebayApiValue;
+  }
+
+  const ebayValue = await fetchEbayLastSoldValue(cardForLookup);
+  lastSoldCache.set(sanitizedId, ebayValue);
+  return ebayValue;
 }
 
 function hasLocalDataFiles() {
@@ -168,13 +441,16 @@ async function ensureLocalDataLoaded() {
           set,
           number: card.number,
           supertype: card.supertype,
-          subtypes: card.subtypes
+          subtypes: card.subtypes,
+          tcgplayer: card.tcgplayer,
+          cardmarket: card.cardmarket
         });
       }
     }
 
     localDataCache.sets = sets;
     localDataCache.cards = cards;
+    localDataCache.cardsById = new Map(cards.map((card) => [card.id, card]));
     localDataCache.loaded = true;
     localDataCache.loadingPromise = null;
   })();
@@ -433,7 +709,9 @@ function normalizeCardForClient(card) {
     set: card.set,
     number: card.number,
     supertype: card.supertype,
-    subtypes: card.subtypes
+    subtypes: card.subtypes,
+    tcgplayer: card.tcgplayer,
+    cardmarket: card.cardmarket
   };
 }
 
@@ -806,7 +1084,7 @@ async function getCardsFromApi({ search, setId, sort, page, pageSize }) {
       orderBy: API_SORT_MAP[sort],
       page,
       pageSize,
-      select: "id,name,images,hp,types,rarity,set,number,supertype,subtypes"
+      select: "id,name,images,hp,types,rarity,set,number,supertype,subtypes,tcgplayer,cardmarket"
     }
   });
 
@@ -877,7 +1155,7 @@ async function getSetCardsApi(setId) {
         q: `set.id:${setId}`,
         page,
         pageSize,
-        select: "id,name,images,hp,types,rarity,set,number,supertype,subtypes"
+        select: "id,name,images,hp,types,rarity,set,number,supertype,subtypes,tcgplayer,cardmarket"
       }
     });
 
@@ -960,6 +1238,40 @@ app.get("/api/cards", async (req, res) => {
       error: "Unable to load cards",
       details,
       source
+    });
+  }
+});
+
+app.post("/api/card-prices", async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  const uniqueIds = [...new Set(ids.map((id) => sanitizeCardId(id)).filter(Boolean))].slice(0, 120);
+
+  if (!uniqueIds.length) {
+    res.json({ prices: {} });
+    return;
+  }
+
+  try {
+    if (getActiveSource() === "github") {
+      await ensureLocalDataLoaded();
+    }
+
+    const prices = {};
+
+    for (let index = 0; index < uniqueIds.length; index += 8) {
+      const chunk = uniqueIds.slice(index, index + 8);
+      const values = await Promise.all(chunk.map((id) => resolveLastSoldValue(id)));
+      chunk.forEach((id, offset) => {
+        prices[id] = values[offset] || 0;
+      });
+    }
+
+    res.json({ prices });
+  } catch (error) {
+    const details = error.response?.data?.error?.message || error.message;
+    res.status(500).json({
+      error: "Unable to resolve card prices",
+      details
     });
   }
 });

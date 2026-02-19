@@ -211,6 +211,147 @@ body.modal-open {
   color: #5c6c83;
 }
 
+.panel-heading-compact h3 {
+  margin: 0;
+  font-family: "Bungee", Impact, fantasy;
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+}
+
+.panel-heading-compact p {
+  margin: 0.2rem 0 0.6rem;
+  color: #5c6c83;
+}
+
+.panel-dashboard {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.2fr) repeat(3, minmax(0, 1fr));
+  gap: 0.72rem;
+}
+
+.dashboard-card {
+  border: 1px solid #d6e0ed;
+  border-radius: 0.86rem;
+  background: #fff;
+  box-shadow: 0 8px 16px rgba(18, 34, 56, 0.06);
+  padding: 0.7rem;
+}
+
+.dashboard-card h3 {
+  margin: 0 0 0.48rem;
+  font-size: 0.9rem;
+}
+
+.dashboard-profile-card {
+  display: grid;
+  justify-items: start;
+  gap: 0.45rem;
+}
+
+.trainer-avatar-btn {
+  width: 88px;
+  aspect-ratio: 1;
+  border-radius: 999px;
+  border: 2px solid #d5e2f2;
+  background: linear-gradient(145deg, #edf4ff, #dfeaf8);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  overflow: hidden;
+}
+
+.trainer-avatar-initial {
+  font-size: 1.95rem;
+  font-weight: 800;
+  color: #37557a;
+}
+
+.trainer-avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.dashboard-profile-card label {
+  display: grid;
+  gap: 0.24rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #31435e;
+}
+
+.dashboard-stat-card {
+  display: grid;
+  align-content: start;
+  gap: 0.22rem;
+}
+
+.dashboard-stat-value {
+  margin: 0;
+  font-size: clamp(1.2rem, 2.2vw, 1.72rem);
+  font-weight: 800;
+  color: #1f3b63;
+}
+
+.dashboard-stat-sub {
+  margin: 0;
+  color: #586d8a;
+  font-size: 0.78rem;
+}
+
+.dashboard-top-showcase {
+  border: 1px solid #d7dfeb;
+  border-radius: 0.88rem;
+  background: rgba(255, 255, 255, 0.86);
+  padding: 0.7rem;
+}
+
+.dashboard-top-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.62rem;
+}
+
+.dashboard-top-grid .empty-state {
+  grid-column: 1 / -1;
+}
+
+.dashboard-top-card {
+  border: 1px solid #dde5f1;
+  border-radius: 0.72rem;
+  background: #fff;
+  padding: 0.44rem;
+  display: grid;
+  gap: 0.28rem;
+}
+
+.dashboard-top-card img {
+  width: 100%;
+  border-radius: 0.5rem;
+  border: 1px solid #e6edf6;
+}
+
+.dashboard-top-card h4 {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.dashboard-top-card p {
+  margin: 0;
+  font-size: 0.7rem;
+  color: #5a6c86;
+}
+
+.dashboard-top-value {
+  color: #1f5f3e !important;
+  font-weight: 800;
+}
+
 .controls {
   display: grid;
   gap: 0.7rem;
@@ -221,8 +362,14 @@ body.modal-open {
 }
 
 .controls-binder {
-  grid-template-columns: 1.5fr 1fr 1fr auto;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   margin-bottom: 0.8rem;
+}
+
+.controls-binder-manager {
+  grid-template-columns: minmax(200px, 1fr) auto auto auto auto;
+  margin-bottom: 0.65rem;
+  align-items: end;
 }
 
 .controls-gacha {
@@ -512,99 +659,112 @@ button:disabled {
   color: #5d6f88;
 }
 
-.binder-list {
+.binder-grid {
   display: grid;
-  gap: 0.68rem;
-  max-height: 70vh;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 0.72rem;
+  max-height: 68vh;
   overflow-y: auto;
-  padding-right: 0.15rem;
+  padding-right: 0.16rem;
 }
 
-.binder-item {
-  display: grid;
-  grid-template-columns: 62px 1fr;
-  gap: 0.62rem;
-  border-radius: 0.74rem;
-  border: 1px solid #d9e1ec;
+.binder-grid .empty-state {
+  grid-column: 1 / -1;
+}
+
+.binder-slot {
+  position: relative;
+  border-radius: 0.85rem;
+  border: 1px solid #d7dfea;
   background: #fff;
-  padding: 0.52rem;
-}
-
-.binder-item img {
-  width: 62px;
-  height: 86px;
-  object-fit: cover;
-  border-radius: 0.38rem;
-}
-
-.binder-main {
+  box-shadow: 0 8px 20px rgba(16, 33, 62, 0.08);
+  padding: 0.5rem;
   display: grid;
-  gap: 0.34rem;
+  gap: 0.45rem;
 }
 
-.binder-main h4 {
-  margin: 0;
-  font-size: 0.92rem;
+.binder-slot.is-unobtained {
+  background: linear-gradient(180deg, #f5f6f8, #edeff3);
+  border-color: #cfd6e0;
 }
 
-.binder-main p {
-  margin: 0;
-  font-size: 0.76rem;
-  color: #4f6078;
+.binder-slot-dupe,
+.binder-slot-number {
+  position: absolute;
+  z-index: 3;
+  border-radius: 999px;
+  font-size: 0.67rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  padding: 0.14rem 0.42rem;
 }
 
-.binder-actions {
-  margin-top: 0.1rem;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.33rem;
+.binder-slot-dupe {
+  top: 0.4rem;
+  left: 0.4rem;
+  background: #f6cf59;
+  color: #714400;
 }
 
-.qty-control {
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid #d3dce8;
-  border-radius: 0.58rem;
+.binder-slot-number {
+  top: 0.4rem;
+  right: 0.4rem;
+  background: rgba(24, 36, 58, 0.86);
+  color: #e9f2ff;
+}
+
+.binder-slot-image-wrap {
+  border-radius: 0.62rem;
   overflow: hidden;
+  border: 1px solid #e4eaf3;
 }
 
-.qty-control button {
-  border-radius: 0;
-  padding: 0.34rem 0.54rem;
-}
-
-.qty-control input {
-  width: 3.3rem;
-  border: 0;
-  border-left: 1px solid #d3dce8;
-  border-right: 1px solid #d3dce8;
-  border-radius: 0;
-  text-align: center;
-  padding: 0.34rem 0.24rem;
-}
-
-.condition-select {
-  min-width: 142px;
-  padding: 0.34rem 0.44rem;
-}
-
-.remove-btn {
-  background: #fff;
-  border: 1px solid #efc2c1;
-  color: #ae2a25;
-  padding: 0.34rem 0.54rem;
-}
-
-.binder-notes {
-  margin-top: 0.08rem;
+.binder-slot img {
   width: 100%;
-  border: 1px solid #d3dce8;
-  border-radius: 0.54rem;
-  padding: 0.4rem 0.48rem;
-  font-size: 0.75rem;
-  min-height: 2.2rem;
-  resize: vertical;
+  display: block;
+}
+
+.binder-slot.is-unobtained img {
+  filter: grayscale(1) brightness(0.66);
+}
+
+.binder-slot-meta {
+  display: grid;
+  gap: 0.22rem;
+}
+
+.binder-slot-meta h4 {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.25;
+}
+
+.binder-slot-meta p {
+  margin: 0;
+  font-size: 0.73rem;
+  color: #51647f;
+}
+
+.binder-slot-value {
+  font-weight: 800;
+  color: #204f34 !important;
+}
+
+.binder-slot-actions {
+  margin-top: 0.18rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.binder-slot-actions button {
+  padding: 0.34rem 0.5rem;
+}
+
+.binder-slot-qty {
+  font-size: 0.76rem;
+  font-weight: 800;
+  color: #2a3d5b;
 }
 
 .gacha-popout {
@@ -1822,8 +1982,20 @@ button:disabled {
     grid-column: 1 / -1;
   }
 
-  .binder-list {
+  .binder-grid {
     max-height: none;
+  }
+
+  .dashboard-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .dashboard-profile-card {
+    grid-column: 1 / -1;
+  }
+
+  .dashboard-top-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .gacha-info-toggle {
@@ -1849,6 +2021,7 @@ button:disabled {
 @media (max-width: 780px) {
   .controls-finder,
   .controls-binder,
+  .controls-binder-manager,
   .controls-gacha {
     grid-template-columns: 1fr;
   }
@@ -1864,6 +2037,11 @@ button:disabled {
 
   .binder-rings {
     display: none;
+  }
+
+  .dashboard-grid,
+  .dashboard-top-grid {
+    grid-template-columns: 1fr;
   }
 
   .modal-reveal-info {
