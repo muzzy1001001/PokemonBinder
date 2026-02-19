@@ -610,6 +610,45 @@ function isRarePlus(card) {
   return tier === "rare" || tier === "ultra" || label.includes("holo");
 }
 
+function isEnergyCard(card) {
+  const supertype = normalizeText(card?.supertype);
+  if (supertype === "energy") {
+    return true;
+  }
+
+  const name = normalizeText(card?.name);
+  return name.includes("energy");
+}
+
+function isBasicEnergyCard(card) {
+  if (!isEnergyCard(card)) {
+    return false;
+  }
+
+  const name = normalizeText(card?.name);
+  const subtypes = Array.isArray(card?.subtypes)
+    ? card.subtypes.map((item) => normalizeText(item))
+    : [];
+
+  if (subtypes.includes("basic")) {
+    return true;
+  }
+
+  const basicNames = new Set([
+    "grass energy",
+    "fire energy",
+    "water energy",
+    "lightning energy",
+    "psychic energy",
+    "fighting energy",
+    "darkness energy",
+    "metal energy",
+    "fairy energy"
+  ]);
+
+  return basicNames.has(name);
+}
+
 function sanitizePackCount(value) {
   const packCount = Number.parseInt(value, 10);
   if (Number.isNaN(packCount)) {
@@ -726,7 +765,13 @@ function buildPackPulls(setCards) {
     }
   };
 
-  for (let index = 0; index < 5; index += 1) {
+  const hasBasicEnergy = remainingCards.some((card) => isBasicEnergyCard(card));
+  if (hasBasicEnergy) {
+    pickOrFallback(() => takeRandomWhere(remainingCards, (card) => isBasicEnergyCard(card)));
+  }
+
+  const commonSlots = hasBasicEnergy ? 4 : 5;
+  for (let index = 0; index < commonSlots; index += 1) {
     pickOrFallback(() =>
       takeRandomWhere(remainingCards, (card) => rarityTier(card) === "common")
     );
@@ -743,33 +788,39 @@ function buildPackPulls(setCards) {
       remainingCards,
       (card) => {
         const tier = rarityTier(card);
-        return tier === "uncommon" || tier === "rare" || tier === "ultra";
+        return (
+          tier === "common" ||
+          tier === "uncommon" ||
+          tier === "rare" ||
+          tier === "ultra" ||
+          tier === "other"
+        ) && !isBasicEnergyCard(card);
       },
       (card) => {
-      const tier = rarityTier(card);
-      const label = rarityLabel(card);
+        const tier = rarityTier(card);
+        const label = rarityLabel(card);
 
-      if (tier === "rare" && label.includes("holo")) {
-        return 1.9;
-      }
+        if (tier === "rare" && label.includes("holo")) {
+          return 0.26;
+        }
 
-      if (tier === "rare") {
-        return 1.45;
-      }
+        if (tier === "rare") {
+          return 0.18;
+        }
 
-      if (tier === "uncommon") {
-        return 1.25;
-      }
+        if (tier === "ultra") {
+          return 0.03;
+        }
 
-      if (tier === "ultra") {
-        return 0.25;
-      }
+        if (tier === "uncommon") {
+          return 1;
+        }
 
-      if (tier === "other") {
-        return 0.7;
-      }
+        if (tier === "common") {
+          return 1.35;
+        }
 
-      return 0.45;
+        return 0.55;
       }
     )
   );
@@ -779,30 +830,37 @@ function buildPackPulls(setCards) {
   }
 
   pickOrFallback(() =>
-    takeRandomWhere(remainingCards, (card) => {
-      const tier = rarityTier(card);
-      return tier === "rare" || tier === "ultra" || isRarePlus(card);
-    })
+    weightedTakeRandomWhere(
+      remainingCards,
+      (card) => !isBasicEnergyCard(card),
+      (card) => {
+        const tier = rarityTier(card);
+        const label = rarityLabel(card);
+
+        if (tier === "ultra") {
+          return 0.025;
+        }
+
+        if (tier === "rare" && label.includes("holo")) {
+          return 0.24;
+        }
+
+        if (tier === "rare") {
+          return 0.16;
+        }
+
+        if (tier === "uncommon") {
+          return 1.1;
+        }
+
+        if (tier === "common") {
+          return 0.7;
+        }
+
+        return 0.5;
+      }
+    )
   );
-
-  if (pulledCards.length >= 2) {
-    const secondToLastIndex = pulledCards.length - 2;
-    const lastIndex = pulledCards.length - 1;
-    const secondToLastCard = pulledCards[secondToLastIndex];
-    const lastCard = pulledCards[lastIndex];
-
-    const secondTier = rarityTier(secondToLastCard);
-    const lastTier = rarityTier(lastCard);
-
-    if (
-      secondTier === "ultra" &&
-      lastTier !== "ultra" &&
-      lastTier !== "rare"
-    ) {
-      pulledCards[secondToLastIndex] = lastCard;
-      pulledCards[lastIndex] = secondToLastCard;
-    }
-  }
 
   while (
     pulledCards.length < GACHA_CARDS_PER_PACK &&
@@ -862,25 +920,60 @@ function slotNineWeight(card) {
   const label = rarityLabel(card);
 
   if (tier === "rare" && label.includes("holo")) {
-    return 1.9;
+    return 0.26;
   }
 
   if (tier === "rare") {
-    return 1.45;
-  }
-
-  if (tier === "uncommon") {
-    return 1.25;
+    return 0.18;
   }
 
   if (tier === "ultra") {
-    return 0.25;
+    return 0.03;
   }
 
-  return 0;
+  if (tier === "uncommon") {
+    return 1;
+  }
+
+  if (tier === "common") {
+    return 1.35;
+  }
+
+  return 0.55;
+}
+
+function finalSlotWeight(card) {
+  const tier = rarityTier(card);
+  const label = rarityLabel(card);
+
+  if (tier === "ultra") {
+    return 0.025;
+  }
+
+  if (tier === "rare" && label.includes("holo")) {
+    return 0.24;
+  }
+
+  if (tier === "rare") {
+    return 0.16;
+  }
+
+  if (tier === "uncommon") {
+    return 1.1;
+  }
+
+  if (tier === "common") {
+    return 0.7;
+  }
+
+  return 0.5;
 }
 
 function previewTierForCard(card) {
+  if (isBasicEnergyCard(card)) {
+    return "energy";
+  }
+
   const tier = rarityTier(card);
   if (tier === "ultra") {
     return "ultra";
@@ -905,6 +998,7 @@ function buildGachaPreviewData(set, setCards) {
   const allCards = [...setCards];
 
   const buckets = {
+    energy: [],
     ultra: [],
     rare: [],
     uncommon: [],
@@ -921,6 +1015,7 @@ function buildGachaPreviewData(set, setCards) {
   }
 
   const orderedPreviewCards = [
+    ...buckets.energy,
     ...buckets.ultra,
     ...buckets.rare,
     ...buckets.uncommon,
@@ -928,15 +1023,20 @@ function buildGachaPreviewData(set, setCards) {
     ...buckets.other
   ];
 
+  const hasBasicEnergy = buckets.energy.length > 0;
+  const commonSlots = hasBasicEnergy ? 4 : 5;
+  const uncommonSlots = 3;
+
   const slotNineCandidates = setCards.filter((card) => {
-    const tier = rarityTier(card);
-    return tier === "uncommon" || tier === "rare" || tier === "ultra";
+    return !isBasicEnergyCard(card);
   });
 
   const slotNineTotals = {
+    common: 0,
     uncommon: 0,
     rare: 0,
     ultra: 0,
+    other: 0,
     all: 0
   };
 
@@ -948,30 +1048,62 @@ function buildGachaPreviewData(set, setCards) {
 
     const tier = rarityTier(card);
     slotNineTotals.all += weight;
-    if (tier === "uncommon") {
+    if (tier === "common") {
+      slotNineTotals.common += weight;
+    } else if (tier === "uncommon") {
       slotNineTotals.uncommon += weight;
     } else if (tier === "rare") {
       slotNineTotals.rare += weight;
     } else if (tier === "ultra") {
       slotNineTotals.ultra += weight;
+    } else {
+      slotNineTotals.other += weight;
     }
   }
 
-  const finalSlotCandidates = setCards.filter((card) => {
+  const finalSlotCandidates = setCards.filter((card) => !isBasicEnergyCard(card));
+
+  const finalSlotTotals = {
+    common: 0,
+    uncommon: 0,
+    rare: 0,
+    ultra: 0,
+    other: 0,
+    all: 0
+  };
+
+  for (const card of finalSlotCandidates) {
+    const weight = finalSlotWeight(card);
+    if (weight <= 0) {
+      continue;
+    }
+
     const tier = rarityTier(card);
-    return tier === "rare" || tier === "ultra" || isRarePlus(card);
-  });
+    finalSlotTotals.all += weight;
+    if (tier === "common") {
+      finalSlotTotals.common += weight;
+    } else if (tier === "uncommon") {
+      finalSlotTotals.uncommon += weight;
+    } else if (tier === "rare") {
+      finalSlotTotals.rare += weight;
+    } else if (tier === "ultra") {
+      finalSlotTotals.ultra += weight;
+    } else {
+      finalSlotTotals.other += weight;
+    }
+  }
 
-  const finalSlotRarePlusCount = finalSlotCandidates.filter((card) =>
-    isRarePlus(card)
-  ).length;
-  const finalSlotRareCount = finalSlotCandidates.filter(
-    (card) => previewTierForCard(card) === "rare"
-  ).length;
-  const finalSlotUltraCount = finalSlotCandidates.filter(
-    (card) => rarityTier(card) === "ultra"
-  ).length;
+  let finalSlotRarePlusWeight = 0;
+  for (const card of finalSlotCandidates) {
+    if (!isRarePlus(card)) {
+      continue;
+    }
+    finalSlotRarePlusWeight += finalSlotWeight(card);
+  }
 
+  const slotNineCommonChance = slotNineTotals.all
+    ? slotNineTotals.common / slotNineTotals.all
+    : 0;
   const slotNineUncommonChance = slotNineTotals.all
     ? slotNineTotals.uncommon / slotNineTotals.all
     : 0;
@@ -980,48 +1112,85 @@ function buildGachaPreviewData(set, setCards) {
     ? slotNineTotals.ultra / slotNineTotals.all
     : 0;
 
-  const finalSlotRarePlusChance = finalSlotCandidates.length
-    ? finalSlotRarePlusCount / finalSlotCandidates.length
+  const finalSlotCommonChance = finalSlotTotals.all
+    ? finalSlotTotals.common / finalSlotTotals.all
     : 0;
-  const finalSlotRareChance = finalSlotCandidates.length
-    ? finalSlotRareCount / finalSlotCandidates.length
+  const finalSlotUncommonChance = finalSlotTotals.all
+    ? finalSlotTotals.uncommon / finalSlotTotals.all
     : 0;
-  const finalSlotUltraChance = finalSlotCandidates.length
-    ? finalSlotUltraCount / finalSlotCandidates.length
+
+  const finalSlotRarePlusChance = finalSlotTotals.all
+    ? finalSlotRarePlusWeight / finalSlotTotals.all
+    : 0;
+  const finalSlotRareChance = finalSlotTotals.all
+    ? finalSlotTotals.rare / finalSlotTotals.all
+    : 0;
+  const finalSlotUltraChance = finalSlotTotals.all
+    ? finalSlotTotals.ultra / finalSlotTotals.all
     : 0;
 
   const commonCount = buckets.common.length;
   const uncommonCount = buckets.uncommon.length;
   const rareCount = buckets.rare.length;
   const ultraCount = buckets.ultra.length;
+  const otherCount = buckets.other.length;
+  const energyCount = buckets.energy.length;
 
   const clampChance = (value) => Math.max(0, Math.min(value, 1));
 
   const cardOddsByTier = {
-    common: commonCount ? clampChance(Math.min(5, commonCount) / commonCount) : 0,
-    uncommon: 0,
+    energy: energyCount && hasBasicEnergy ? clampChance(1 / energyCount) : 0,
+    common: commonCount ? clampChance(Math.min(commonSlots, commonCount) / commonCount) : 0,
+    uncommon: uncommonCount ? clampChance(Math.min(uncommonSlots, uncommonCount) / uncommonCount) : 0,
     rare: 0,
     ultra: 0,
     other: 0
   };
 
+  const combineChance = (a, b) => 1 - (1 - a) * (1 - b);
+
+  if (commonCount) {
+    const slotNineCommonPerCard = clampChance(slotNineCommonChance / commonCount);
+    const finalCommonPerCard = clampChance(finalSlotCommonChance / commonCount);
+    cardOddsByTier.common = combineChance(
+      cardOddsByTier.common,
+      combineChance(slotNineCommonPerCard, finalCommonPerCard)
+    );
+  }
+
   if (uncommonCount) {
-    const baseUncommonChance = clampChance(Math.min(3, uncommonCount) / uncommonCount);
     const slotNineUncommonPerCard = clampChance(slotNineUncommonChance / uncommonCount);
-    cardOddsByTier.uncommon =
-      1 - (1 - baseUncommonChance) * (1 - slotNineUncommonPerCard);
+    const finalUncommonPerCard = clampChance(finalSlotUncommonChance / uncommonCount);
+    cardOddsByTier.uncommon = combineChance(
+      cardOddsByTier.uncommon,
+      combineChance(slotNineUncommonPerCard, finalUncommonPerCard)
+    );
   }
 
   if (rareCount) {
     const slotNineRarePerCard = clampChance(slotNineRareChance / rareCount);
-    const finalSlotRarePerCard = clampChance(finalSlotRareChance / rareCount);
-    cardOddsByTier.rare = 1 - (1 - slotNineRarePerCard) * (1 - finalSlotRarePerCard);
+    const finalSlotRarePerCard = finalSlotTotals.all
+      ? clampChance(finalSlotTotals.rare / finalSlotTotals.all / rareCount)
+      : 0;
+    cardOddsByTier.rare = combineChance(slotNineRarePerCard, finalSlotRarePerCard);
   }
 
   if (ultraCount) {
     const slotNineUltraPerCard = clampChance(slotNineUltraChance / ultraCount);
-    const finalSlotUltraPerCard = clampChance(finalSlotUltraChance / ultraCount);
-    cardOddsByTier.ultra = 1 - (1 - slotNineUltraPerCard) * (1 - finalSlotUltraPerCard);
+    const finalSlotUltraPerCard = finalSlotTotals.all
+      ? clampChance(finalSlotTotals.ultra / finalSlotTotals.all / ultraCount)
+      : 0;
+    cardOddsByTier.ultra = combineChance(slotNineUltraPerCard, finalSlotUltraPerCard);
+  }
+
+  if (otherCount) {
+    const slotNineOtherPerCard = slotNineTotals.all
+      ? clampChance(slotNineTotals.other / slotNineTotals.all / otherCount)
+      : 0;
+    const finalOtherPerCard = finalSlotTotals.all
+      ? clampChance(finalSlotTotals.other / finalSlotTotals.all / otherCount)
+      : 0;
+    cardOddsByTier.other = combineChance(slotNineOtherPerCard, finalOtherPerCard);
   }
 
   return {
@@ -1042,11 +1211,15 @@ function buildGachaPreviewData(set, setCards) {
       };
     }),
     odds: {
-      guaranteedCommonSlots: 5,
-      guaranteedUncommonSlots: 3,
+      guaranteedEnergySlots: hasBasicEnergy ? 1 : 0,
+      guaranteedCommonSlots: commonSlots,
+      guaranteedUncommonSlots: uncommonSlots,
       finalSlotRarePlusChance,
+      finalSlotCommonChance,
+      finalSlotUncommonChance,
       finalSlotRareChance,
       finalSlotUltraChance,
+      slotNineCommonChance,
       slotNineUncommonChance,
       slotNineRareChance,
       slotNineUltraChance

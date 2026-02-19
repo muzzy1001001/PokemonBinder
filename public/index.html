@@ -44,10 +44,19 @@
             class="sidebar-link"
             type="button"
             data-view="binder"
-            data-title="My Binder"
-            data-subtitle="Track slots, duplicates, and progression by collection."
+            data-title="Collection Goal"
+            data-subtitle="Build custom collection boards and track missing cards."
           >
-            <span>My Binder</span>
+            <span>Collection Goal</span>
+          </button>
+          <button
+            class="sidebar-link"
+            type="button"
+            data-view="pokedex"
+            data-title="Pokedex"
+            data-subtitle="Track all Pokemon names in your collection progress."
+          >
+            <span>Pokedex</span>
           </button>
           <button
             class="sidebar-link"
@@ -79,16 +88,23 @@
 
             <div class="dashboard-grid">
               <article class="dashboard-card dashboard-profile-card">
-                <h3>Profile</h3>
-                <button id="trainerAvatarBtn" type="button" class="trainer-avatar-btn" aria-label="Change profile photo">
-                  <span id="trainerAvatarInitial" class="trainer-avatar-initial">?</span>
-                  <img id="trainerAvatarImage" class="trainer-avatar-image" alt="Trainer profile" hidden />
-                </button>
+                <h3>Trainer Profile</h3>
+                <div class="trainer-profile-row">
+                  <button id="trainerAvatarBtn" type="button" class="trainer-avatar-btn" aria-label="Change profile photo">
+                    <span id="trainerAvatarInitial" class="trainer-avatar-initial">?</span>
+                    <img id="trainerAvatarImage" class="trainer-avatar-image" alt="Trainer profile" hidden />
+                  </button>
+                  <div class="trainer-profile-meta">
+                    <p class="trainer-profile-kicker">Trainer ID</p>
+                    <p id="trainerUid" class="trainer-profile-id">PK-00000000</p>
+                  </div>
+                </div>
                 <input id="trainerAvatarInput" type="file" accept="image/*" hidden />
-                <label>
-                  IGN
-                  <input id="trainerIgn" type="text" placeholder="In-game name" maxlength="30" />
-                </label>
+                <div class="trainer-ign-row">
+                  <p class="trainer-profile-kicker">IGN</p>
+                  <p id="trainerIgnDisplay" class="trainer-ign-display">Unknown Trainer</p>
+                  <button id="trainerIgnEditBtn" type="button" class="trainer-ign-edit" aria-label="Edit IGN">✎</button>
+                </div>
               </article>
 
               <article class="dashboard-card dashboard-stat-card">
@@ -112,22 +128,71 @@
 
             <section class="dashboard-top-showcase">
               <div class="panel-heading panel-heading-compact">
-                <h3>Top 5 Best Binder Cards</h3>
+                <h3>Favorite Cards</h3>
+                <p id="dashboardFavoriteMeta">Pin your most-loved cards from Finder, Binder, or Top Value.</p>
+              </div>
+              <div id="dashboardFavoriteCards" class="dashboard-top-grid"></div>
+            </section>
+
+            <section class="dashboard-top-showcase">
+              <div class="panel-heading panel-heading-compact">
+                <h3>Highest Value Cards</h3>
                 <p id="dashboardTopMeta">Highest last sold value cards in your active binder.</p>
               </div>
               <div id="dashboardTopCards" class="dashboard-top-grid"></div>
             </section>
+
           </section>
         </section>
 
-        <section id="view-binder" class="view" aria-label="My Binder">
+        <section id="view-binder" class="view" aria-label="Collection Goal">
           <section class="panel panel-binder">
             <div class="panel-heading">
-              <h2>My Binder</h2>
+              <h2>Collection Goal</h2>
               <p id="binderStats">0 / 0 obtained | 0 total copies</p>
             </div>
 
-            <div class="controls controls-binder-manager">
+            <section class="binder-goals-builder">
+              <div class="panel-heading panel-heading-compact">
+                <h3>Collection Goal Boards</h3>
+                <p>Create custom binder goals (like all Gengars or full Surging Sparks) with your own PNG board design.</p>
+              </div>
+
+              <div class="controls controls-goals">
+                <label>
+                  Goal Title
+                  <input id="goalTitleInput" type="text" placeholder="All Gengars" maxlength="50" />
+                </label>
+
+                <label>
+                  Goal Type
+                  <select id="goalTypeSelect">
+                    <option value="pokemon">Pokemon Name</option>
+                    <option value="set">Entire Set</option>
+                    <option value="custom">Custom Search</option>
+                  </select>
+                </label>
+
+                <label>
+                  Keyword
+                  <input id="goalKeywordInput" type="text" placeholder="Gengar" maxlength="40" />
+                </label>
+
+                <label>
+                  Set (optional)
+                  <select id="goalSetSelect">
+                    <option value="">All sets</option>
+                  </select>
+                </label>
+
+                <button id="addGoalBtn" type="button">Add Goal Board</button>
+              </div>
+
+              <div id="goalGrid" class="goal-grid"></div>
+            </section>
+
+            <div class="binder-legacy" hidden>
+            <div class="controls controls-binder-manager" hidden>
               <label>
                 Active Binder
                 <select id="binderPicker"></select>
@@ -192,6 +257,49 @@
             </div>
 
             <div id="binderList" class="binder-grid"></div>
+            </div>
+          </section>
+        </section>
+
+        <section id="view-pokedex" class="view" aria-label="Pokedex">
+          <section class="panel panel-pokedex">
+            <div class="panel-heading">
+              <h2>Pokedex</h2>
+              <p id="pokedexMeta">Loading Pokedex...</p>
+            </div>
+
+            <div class="controls controls-pokedex">
+              <label>
+                Sort Pokedex
+                <select id="pokedexSort">
+                  <option value="generation_asc">Generation 1 -> Latest</option>
+                  <option value="generation_desc">Latest -> Generation 1</option>
+                  <option value="name_asc">Name A-Z</option>
+                  <option value="name_desc">Name Z-A</option>
+                  <option value="rarity_desc">Rarest -> Common</option>
+                  <option value="rarity_asc">Common -> Rarest</option>
+                  <option value="owned_first">Owned First</option>
+                  <option value="missing_first">Missing First</option>
+                  <option value="set_newest">Newest Set</option>
+                  <option value="set_oldest">Oldest Set</option>
+                </select>
+              </label>
+            </div>
+
+            <div id="pokedexLayout" class="pokedex-layout">
+              <div id="pokedexGrid" class="pokedex-grid"></div>
+
+              <section id="pokedexGalleryPanel" class="pokedex-gallery-panel" hidden>
+                <header class="pokedex-gallery-header">
+                  <div>
+                    <h3 id="pokedexGalleryTitle">Pokemon Gallery</h3>
+                    <p id="pokedexGalleryMeta">Choose an obtained card to set as your Pokedex preview.</p>
+                  </div>
+                  <button id="pokedexGalleryCloseBtn" type="button" class="ghost-btn">Back</button>
+                </header>
+                <div id="pokedexGalleryGrid" class="pokedex-gallery-grid"></div>
+              </section>
+            </div>
           </section>
         </section>
 
@@ -331,9 +439,6 @@
                     </header>
                     <div id="gachaResult" class="gacha-result"></div>
                     <div class="gacha-draw-review-actions">
-                      <button id="gachaCloseReviewBtn" type="button" class="ghost-btn">
-                        Close
-                      </button>
                       <button id="gachaAddToBinderBtn" type="button">
                         Add to Binder
                       </button>
@@ -391,7 +496,6 @@
         <div id="modalRevealInfo" class="modal-reveal-info" hidden>
           <p id="modalRevealCounter" class="modal-reveal-counter"></p>
           <p id="modalRevealRarity" class="modal-reveal-rarity"></p>
-          <button id="modalRevealSkipBtn" type="button" class="modal-reveal-skip">Open All</button>
         </div>
       </section>
     </div>

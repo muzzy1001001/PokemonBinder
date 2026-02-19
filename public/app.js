@@ -1,8 +1,21 @@
 const STORAGE_KEY_BINDER = "myPokemonBinder";
 const STORAGE_KEY_BINDER_STATE = "pokemonBinderStateV2";
 const LEGACY_STORAGE_KEY_DECK = "myPokemonDeck";
+const STORAGE_KEY_POKEAPI_SPECIES = "pokemonSpeciesDexCacheV1";
 const DEFAULT_BINDER_NAME = "Main Binder";
 const COLLECTION_PRESET_OPTIONS = ["all_set", "pokemon_151", "mega"];
+const POKEDEX_SORT_OPTIONS = [
+  "generation_asc",
+  "generation_desc",
+  "name_asc",
+  "name_desc",
+  "rarity_desc",
+  "rarity_asc",
+  "owned_first",
+  "missing_first",
+  "set_newest",
+  "set_oldest"
+];
 const CONDITION_OPTIONS = [
   "Mint",
   "Near Mint",
@@ -21,14 +34,32 @@ const state = {
   profile: {
     name: "",
     ign: "",
-    avatar: ""
+    avatar: "",
+    uid: "",
+    favoriteCardIds: []
   },
+  collectionGoals: [],
+  goalProgressCache: new Map(),
+  goalOpenIds: [],
   binderCollection: {
     preset: "all_set",
     setId: "",
     cards: [],
     loading: false,
     error: ""
+  },
+  pokedex: {
+    entries: [],
+    loading: false,
+    loaded: false,
+    error: "",
+    sort: "generation_asc",
+    speciesDexByName: {},
+    speciesDexByCompact: {},
+    speciesMapLoaded: false,
+    galleryBySpecies: {},
+    selectedSpeciesKey: "",
+    previewCardBySpecies: {}
   },
   totalCount: 0,
   page: 1,
@@ -101,7 +132,11 @@ const el = {
   trainerAvatarImage: document.getElementById("trainerAvatarImage"),
   trainerAvatarInitial: document.getElementById("trainerAvatarInitial"),
   trainerAvatarInput: document.getElementById("trainerAvatarInput"),
-  trainerIgn: document.getElementById("trainerIgn"),
+  trainerIgnDisplay: document.getElementById("trainerIgnDisplay"),
+  trainerIgnEditBtn: document.getElementById("trainerIgnEditBtn"),
+  trainerUid: document.getElementById("trainerUid"),
+  dashboardFavoriteMeta: document.getElementById("dashboardFavoriteMeta"),
+  dashboardFavoriteCards: document.getElementById("dashboardFavoriteCards"),
   dashboardCardsOwned: document.getElementById("dashboardCardsOwned"),
   dashboardUniqueOwned: document.getElementById("dashboardUniqueOwned"),
   dashboardNetWorth: document.getElementById("dashboardNetWorth"),
@@ -119,6 +154,21 @@ const el = {
   binderCondition: document.getElementById("binderCondition"),
   clearBinder: document.getElementById("clearBinder"),
   binderList: document.getElementById("binderList"),
+  goalTitleInput: document.getElementById("goalTitleInput"),
+  goalTypeSelect: document.getElementById("goalTypeSelect"),
+  goalKeywordInput: document.getElementById("goalKeywordInput"),
+  goalSetSelect: document.getElementById("goalSetSelect"),
+  addGoalBtn: document.getElementById("addGoalBtn"),
+  goalGrid: document.getElementById("goalGrid"),
+  pokedexLayout: document.getElementById("pokedexLayout"),
+  pokedexMeta: document.getElementById("pokedexMeta"),
+  pokedexSort: document.getElementById("pokedexSort"),
+  pokedexGrid: document.getElementById("pokedexGrid"),
+  pokedexGalleryPanel: document.getElementById("pokedexGalleryPanel"),
+  pokedexGalleryTitle: document.getElementById("pokedexGalleryTitle"),
+  pokedexGalleryMeta: document.getElementById("pokedexGalleryMeta"),
+  pokedexGalleryGrid: document.getElementById("pokedexGalleryGrid"),
+  pokedexGalleryCloseBtn: document.getElementById("pokedexGalleryCloseBtn"),
   gachaPopout: document.getElementById("gachaPopout"),
   gachaPopoutPanel: document.getElementById("gachaPopoutPanel"),
   gachaPopoutInfo: document.getElementById("gachaPopoutInfo"),
@@ -141,7 +191,6 @@ const el = {
   gachaResult: document.getElementById("gachaResult"),
   gachaDrawReview: document.getElementById("gachaDrawReview"),
   gachaDrawReviewMeta: document.getElementById("gachaDrawReviewMeta"),
-  gachaCloseReviewBtn: document.getElementById("gachaCloseReviewBtn"),
   gachaAddToBinderBtn: document.getElementById("gachaAddToBinderBtn"),
   emptyStateTemplate: document.getElementById("emptyStateTemplate"),
   cardModal: document.getElementById("cardModal"),
@@ -274,6 +323,86 @@ function normalizeBinderRecord(raw, index) {
   };
 }
 
+function generateTrainerUid() {
+  const block = () => Math.floor(Math.random() * 10000).toString().padStart(4, "0");
+  return `PK-${block()}-${block()}`;
+}
+
+function normalizeFavoriteCardIds(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const unique = new Set();
+  for (const item of value) {
+    const cardId = String(item || "").trim();
+    if (!cardId) {
+      continue;
+    }
+    unique.add(cardId);
+  }
+
+  return [...unique].slice(0, 60);
+}
+
+function generateCollectionGoalId() {
+  return `goal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeCollectionGoal(raw) {
+  const type = ["pokemon", "set", "custom"].includes(raw?.type) ? raw.type : "pokemon";
+  return {
+    id: raw?.id || generateCollectionGoalId(),
+    title: String(raw?.title || "Collection Goal").trim().slice(0, 50) || "Collection Goal",
+    type,
+    keyword: String(raw?.keyword || "").trim().slice(0, 40),
+    setId: String(raw?.setId || "").trim(),
+    boardImage: String(raw?.boardImage || ""),
+    updatedAt: Number(raw?.updatedAt) || Date.now()
+  };
+}
+
+function invalidateGoalProgressCache() {
+  state.goalProgressCache.clear();
+}
+
+function isGoalOpen(goalId) {
+  return state.goalOpenIds.includes(goalId);
+}
+
+function setGoalOpen(goalId, isOpen) {
+  if (isOpen) {
+    if (!state.goalOpenIds.includes(goalId)) {
+      state.goalOpenIds = [...state.goalOpenIds, goalId];
+    }
+    return;
+  }
+
+  state.goalOpenIds = state.goalOpenIds.filter((id) => id !== goalId);
+}
+
+function isFavoriteCard(cardId) {
+  return state.profile.favoriteCardIds.includes(String(cardId || ""));
+}
+
+function toggleFavoriteCard(card) {
+  const cardId = String(card?.id || "").trim();
+  if (!cardId) {
+    return;
+  }
+
+  if (isFavoriteCard(cardId)) {
+    state.profile.favoriteCardIds = state.profile.favoriteCardIds.filter((id) => id !== cardId);
+  } else {
+    state.profile.favoriteCardIds = [cardId, ...state.profile.favoriteCardIds].slice(0, 60);
+  }
+
+  saveBinder();
+  renderCards();
+  renderBinder();
+  renderDashboard();
+}
+
 function getActiveBinderRecord() {
   return state.binders.find((binder) => binder.id === state.activeBinderId) || null;
 }
@@ -305,11 +434,26 @@ function loadBinderState() {
       state.profile.name = String(parsed?.profile?.name || "").slice(0, 40);
       state.profile.ign = String(parsed?.profile?.ign || "").slice(0, 30);
       state.profile.avatar = String(parsed?.profile?.avatar || "");
+      state.profile.uid = String(parsed?.profile?.uid || "").slice(0, 20) || generateTrainerUid();
+      state.profile.favoriteCardIds = normalizeFavoriteCardIds(parsed?.profile?.favoriteCardIds);
+      state.collectionGoals = Array.isArray(parsed?.collectionGoals)
+        ? parsed.collectionGoals.map((goal) => normalizeCollectionGoal(goal))
+        : [];
       state.gacha.godPacksOpened = Math.max(toPositiveInt(parsed?.godPacksOpened, 0), 0);
       if (COLLECTION_PRESET_OPTIONS.includes(parsed?.binderCollection?.preset)) {
         state.binderCollection.preset = parsed.binderCollection.preset;
       }
       state.binderCollection.setId = String(parsed?.binderCollection?.setId || "");
+      if (POKEDEX_SORT_OPTIONS.includes(parsed?.pokedex?.sort)) {
+        state.pokedex.sort = parsed.pokedex.sort;
+      }
+      if (parsed?.pokedex?.previewCardBySpecies && typeof parsed.pokedex.previewCardBySpecies === "object") {
+        state.pokedex.previewCardBySpecies = Object.fromEntries(
+          Object.entries(parsed.pokedex.previewCardBySpecies)
+            .filter(([key, value]) => Boolean(String(key || "").trim()) && Boolean(String(value || "").trim()))
+            .map(([key, value]) => [String(key), String(value)])
+        );
+      }
       setActiveBinder(parsed?.activeBinderId || state.binders[0].id);
       return;
     }
@@ -323,9 +467,15 @@ function loadBinderState() {
         : [];
 
     state.binders = [createDefaultBinderRecord(DEFAULT_BINDER_NAME, legacyEntries)];
+    state.profile.uid = generateTrainerUid();
+    state.profile.favoriteCardIds = [];
+    state.collectionGoals = [];
     setActiveBinder(state.binders[0].id);
   } catch {
     state.binders = [createDefaultBinderRecord()];
+    state.profile.uid = generateTrainerUid();
+    state.profile.favoriteCardIds = [];
+    state.collectionGoals = [];
     setActiveBinder(state.binders[0].id);
   }
 }
@@ -342,11 +492,18 @@ function saveBinder() {
     profile: {
       name: state.profile.name,
       ign: state.profile.ign,
-      avatar: state.profile.avatar
+      avatar: state.profile.avatar,
+      uid: state.profile.uid,
+      favoriteCardIds: state.profile.favoriteCardIds
     },
+    collectionGoals: state.collectionGoals,
     binderCollection: {
       preset: state.binderCollection.preset,
       setId: state.binderCollection.setId
+    },
+    pokedex: {
+      sort: state.pokedex.sort,
+      previewCardBySpecies: state.pokedex.previewCardBySpecies
     },
     godPacksOpened: state.gacha.godPacksOpened
   };
@@ -431,6 +588,11 @@ function setActiveView(viewId, title, subtitle, activeLink = null) {
       el.searchInput.focus();
     });
   }
+
+  if (viewId === "pokedex") {
+    void ensurePokedexLoaded();
+    renderPokedex();
+  }
 }
 
 function resetTilt() {
@@ -456,9 +618,10 @@ function setModalRevealMode(enabled) {
   }
 }
 
-function setModalCardFace(card, showBackFirst = false) {
+function setModalCardFace(card, showBackFirst = false, options = {}) {
   el.modalCardFrontImage.src = card.images?.large || card.images?.small || "";
   el.modalCardFrontImage.alt = `${card.name} card preview`;
+  el.modalCardFrontImage.classList.toggle("is-unobtained-preview", Boolean(options.grayscale));
   el.modalCardBackImage.src = "/cardback.jpg";
   el.modalCardBackImage.alt = "Pokemon card back";
   el.modalFlipCard.classList.toggle("is-revealed", !showBackFirst);
@@ -808,8 +971,15 @@ function startTilt(event) {
 
   event.preventDefault();
   tiltState.isDragging = true;
+  const isLastFrontCard =
+    state.gacha.revealing &&
+    state.gacha.revealStage === "front" &&
+    state.gacha.revealIndex >= state.gacha.revealQueue.length - 1;
+
   tiltState.mode =
-    state.gacha.revealing && state.gacha.revealStage === "front" ? "swipe" : "tilt";
+    state.gacha.revealing && state.gacha.revealStage === "front" && !isLastFrontCard
+      ? "swipe"
+      : "tilt";
   tiltState.pointerId = event.pointerId;
   tiltState.startX = event.clientX;
   tiltState.startY = event.clientY;
@@ -921,13 +1091,29 @@ function endTilt(event) {
   tiltState.mode = "tilt";
 }
 
-function openCardModal(card) {
-  setModalCardFace(card, false);
-  el.modalFlipCard.classList.remove("is-front-locked");
+function openCardModal(card, options = {}) {
+  clearFirstFlipTimer();
+  state.gacha.firstFlipAnimating = false;
+
+  setModalCardFace(card, false, options);
+  el.modalFlipCard.classList.add("is-front-locked");
+  el.modalFlipCard.classList.remove(
+    "is-first-flip",
+    "is-swipe-dragging",
+    "is-swipe-out",
+    "reveal-tier-rare",
+    "reveal-tier-holo",
+    "reveal-tier-ultra",
+    "is-rarest-reveal"
+  );
+  el.modalTiltCard.classList.remove("is-rarest-reveal", "is-swipe-active");
   resetRevealSwipeTransform();
   hideNextRevealPreview();
 
   setModalRevealMode(false);
+  if (el.modalRevealInfo) {
+    el.modalRevealInfo.hidden = true;
+  }
   el.cardModal.classList.add("is-open");
   el.cardModal.setAttribute("aria-hidden", "false");
   document.body.classList.add("modal-open");
@@ -948,6 +1134,9 @@ function closeCardModal() {
   el.cardModal.setAttribute("aria-hidden", "true");
   document.body.classList.remove("modal-open");
   setModalRevealMode(false);
+  if (el.modalRevealInfo) {
+    el.modalRevealInfo.hidden = true;
+  }
   el.modalTiltStage.classList.remove("is-grabbing", "is-tilting");
   el.modalFlipCard.classList.add("is-revealed");
   el.modalFlipCard.classList.remove("is-front-locked");
@@ -1026,7 +1215,16 @@ function formatOddsPercent(value) {
     return "-";
   }
 
-  return `${(value * 100).toFixed(1)}%`;
+  const percent = value * 100;
+  if (percent <= 0) {
+    return "0%";
+  }
+
+  if (percent < 0.1) {
+    return "<0.1%";
+  }
+
+  return `${percent.toFixed(1)}%`;
 }
 
 function updateGachaInfoVisibility() {
@@ -1249,6 +1447,34 @@ function renderCollectionSetOptions() {
   el.binderCollectionSet.value = state.binderCollection.setId || "";
   const useSetPicker = state.binderCollection.preset === "all_set";
   el.binderCollectionSet.disabled = !useSetPicker;
+
+  renderGoalSetOptions();
+}
+
+function renderGoalSetOptions() {
+  if (!el.goalSetSelect) {
+    return;
+  }
+
+  const currentValue = String(el.goalSetSelect.value || "");
+  el.goalSetSelect.innerHTML = "";
+
+  const allOption = document.createElement("option");
+  allOption.value = "";
+  allOption.textContent = "All sets";
+  el.goalSetSelect.appendChild(allOption);
+
+  const fragment = document.createDocumentFragment();
+  for (const set of state.sets) {
+    const option = document.createElement("option");
+    option.value = set.id;
+    option.textContent = `${set.name} (${set.series || "Series"})`;
+    fragment.appendChild(option);
+  }
+  el.goalSetSelect.appendChild(fragment);
+
+  const hasCurrent = state.sets.some((set) => set.id === currentValue);
+  el.goalSetSelect.value = hasCurrent ? currentValue : "";
 }
 
 function renderBinderPicker() {
@@ -1333,8 +1559,13 @@ function deleteActiveBinder() {
   renderBinder();
 }
 
-async function fetchAllCollectionCards({ search = "", setId = "", sort = "name_asc" }) {
-  const pageSize = 40;
+async function fetchAllCollectionCards({
+  search = "",
+  setId = "",
+  sort = "name_asc",
+  pageSize = 40,
+  maxPages = 80
+}) {
   let page = 1;
   let totalCount = Infinity;
   const cards = [];
@@ -1363,7 +1594,7 @@ async function fetchAllCollectionCards({ search = "", setId = "", sort = "name_a
     }
 
     page += 1;
-    if (page > 80) {
+    if (page > maxPages) {
       break;
     }
   }
@@ -1468,13 +1699,85 @@ function renderDashboard() {
       : "Highest last sold value cards in your active binder.";
   }
 
-  if (el.trainerIgn && el.trainerIgn.value !== state.profile.ign) {
-    el.trainerIgn.value = state.profile.ign;
+  if (el.trainerIgnDisplay) {
+    el.trainerIgnDisplay.textContent = state.profile.ign || "Unknown Trainer";
   }
+
+  if (el.trainerUid) {
+    el.trainerUid.textContent = state.profile.uid || "PK-0000-0000";
+  }
+
   renderTrainerAvatar();
 
   if (!el.dashboardTopCards) {
     return;
+  }
+
+  const createDashboardCard = (card) => {
+    const article = document.createElement("article");
+    article.className = "dashboard-top-card";
+
+    const favoriteBtn = document.createElement("button");
+    favoriteBtn.type = "button";
+    favoriteBtn.className = "favorite-toggle";
+    favoriteBtn.classList.toggle("is-active", isFavoriteCard(card.id));
+    favoriteBtn.textContent = isFavoriteCard(card.id) ? "★" : "☆";
+    favoriteBtn.setAttribute(
+      "aria-label",
+      isFavoriteCard(card.id) ? `Remove ${card.name} from favorites` : `Add ${card.name} to favorites`
+    );
+    favoriteBtn.addEventListener("click", () => {
+      toggleFavoriteCard(card);
+    });
+    article.appendChild(favoriteBtn);
+
+    const image = document.createElement("img");
+    image.src = card.images?.small || "";
+    image.alt = `${card.name} card`;
+    article.appendChild(image);
+
+    const name = document.createElement("h4");
+    name.textContent = card.name;
+    article.appendChild(name);
+
+    const meta = document.createElement("p");
+    meta.textContent = `${card.set?.name || "Set"} | ${card.rarity || "Unknown"}`;
+    article.appendChild(meta);
+
+    const value = document.createElement("p");
+    value.className = "dashboard-top-value";
+    value.textContent = formatLastSoldValue(card);
+    article.appendChild(value);
+
+    return article;
+  };
+
+  const binderById = new Map(state.binder.map((card) => [card.id, card]));
+  const favoriteCards = state.profile.favoriteCardIds
+    .map((cardId) => binderById.get(cardId))
+    .filter(Boolean)
+    .slice(0, 6);
+
+  if (el.dashboardFavoriteMeta) {
+    el.dashboardFavoriteMeta.textContent = favoriteCards.length
+      ? `${favoriteCards.length} favorite card${favoriteCards.length === 1 ? "" : "s"} pinned.`
+      : "No favorites yet. Tap ☆ on cards to pin favorites.";
+  }
+
+  if (el.dashboardFavoriteCards) {
+    el.dashboardFavoriteCards.innerHTML = "";
+    if (!favoriteCards.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-state";
+      empty.textContent = "No favorite cards pinned yet.";
+      el.dashboardFavoriteCards.appendChild(empty);
+    } else {
+      const favoritesFragment = document.createDocumentFragment();
+      for (const card of favoriteCards) {
+        favoritesFragment.appendChild(createDashboardCard(card));
+      }
+      el.dashboardFavoriteCards.appendChild(favoritesFragment);
+    }
   }
 
   el.dashboardTopCards.innerHTML = "";
@@ -1493,31 +1796,586 @@ function renderDashboard() {
 
   const fragment = document.createDocumentFragment();
   for (const card of topCards) {
-    const article = document.createElement("article");
-    article.className = "dashboard-top-card";
-
-    const image = document.createElement("img");
-    image.src = card.images?.small || "";
-    image.alt = `${card.name} top card`;
-    article.appendChild(image);
-
-    const name = document.createElement("h4");
-    name.textContent = card.name;
-    article.appendChild(name);
-
-    const meta = document.createElement("p");
-    meta.textContent = `${card.set?.name || "Set"} | ${card.rarity || "Unknown"}`;
-    article.appendChild(meta);
-
-    const value = document.createElement("p");
-    value.className = "dashboard-top-value";
-    value.textContent = formatLastSoldValue(card);
-    article.appendChild(value);
-
-    fragment.appendChild(article);
+    fragment.appendChild(createDashboardCard(card));
   }
 
   el.dashboardTopCards.appendChild(fragment);
+
+}
+
+function normalizePokemonKey(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractDexNumberFromUrl(url) {
+  const match = String(url || "").match(/\/pokemon-species\/(\d+)\/?$/i);
+  return match ? Number.parseInt(match[1], 10) : 0;
+}
+
+function getGenerationFromDexNumber(dexNumber) {
+  if (!dexNumber) {
+    return 99;
+  }
+
+  if (dexNumber <= 151) return 1;
+  if (dexNumber <= 251) return 2;
+  if (dexNumber <= 386) return 3;
+  if (dexNumber <= 493) return 4;
+  if (dexNumber <= 649) return 5;
+  if (dexNumber <= 721) return 6;
+  if (dexNumber <= 809) return 7;
+  if (dexNumber <= 905) return 8;
+  return 9;
+}
+
+function getSetReleaseTimestamp(set) {
+  const stamp = Date.parse(String(set?.releaseDate || ""));
+  return Number.isFinite(stamp) ? stamp : 0;
+}
+
+function formatSpeciesNameFromSlug(slug) {
+  return String(slug || "")
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function toCompactPokemonKey(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function buildCompactSpeciesMap(speciesDexByName) {
+  const compactMap = {};
+  for (const [slug, dexNumber] of Object.entries(speciesDexByName || {})) {
+    const compactKey = toCompactPokemonKey(slug);
+    if (compactKey && dexNumber && !compactMap[compactKey]) {
+      compactMap[compactKey] = dexNumber;
+    }
+  }
+  return compactMap;
+}
+
+function buildPokemonSlugCandidates(rawName) {
+  const normalized = normalizePokemonKey(
+    String(rawName || "")
+      .replace(/♀/g, " female ")
+      .replace(/♂/g, " male ")
+  );
+  if (!normalized) {
+    return [];
+  }
+
+  let working = normalized.replace(/^[a-z0-9 .-]+['’]s\s+/, "");
+  working = working.replace(/\([^)]*\)/g, " ");
+  working = working.replace(/\b(delta species|ex|gx|vmax|vstar|v-union|v|lv\.?x|break|prime|legend|radiant|star)\b/g, " ");
+  working = working.replace(/^(alolan|galarian|hisuian|paldean)\s+/, "");
+  working = working.replace(/\s+/g, " ").trim();
+
+  const tokens = working.split(" ").filter(Boolean);
+  if (!tokens.length) {
+    return [];
+  }
+
+  const candidates = new Set();
+  const joined = tokens.join("-");
+  candidates.add(joined);
+  candidates.add(joined.replace(/-/g, ""));
+  candidates.add(tokens[tokens.length - 1]);
+  candidates.add(tokens[0]);
+
+  if (tokens[0] === "mega" || tokens[0] === "m") {
+    candidates.add(tokens.slice(1).join("-"));
+  }
+
+  if (tokens.length > 1) {
+    candidates.add(tokens.slice(0, 2).join("-"));
+  }
+
+  return [...candidates].filter(Boolean);
+}
+
+function lookupSpeciesFromName(name, speciesDexByName) {
+  const compactSpeciesMap = state.pokedex.speciesDexByCompact || {};
+  const candidates = buildPokemonSlugCandidates(name);
+  for (const slug of candidates) {
+    const normalizedSlug = String(slug || "").trim();
+    if (!normalizedSlug) {
+      continue;
+    }
+
+    const dexNumber =
+      speciesDexByName[normalizedSlug] ||
+      compactSpeciesMap[toCompactPokemonKey(normalizedSlug)];
+
+    if (dexNumber) {
+      return {
+        slug: normalizedSlug,
+        dexNumber,
+        generation: getGenerationFromDexNumber(dexNumber),
+        displayName: formatSpeciesNameFromSlug(normalizedSlug)
+      };
+    }
+  }
+
+  return null;
+}
+
+function buildPokedexEntries(cards, speciesDexByName) {
+  const uniqueBySpecies = new Map();
+  const galleryBySpecies = {};
+
+  for (const card of cards) {
+    if (normalizePokemonKey(card?.supertype) !== "pokemon") {
+      continue;
+    }
+
+    const species = lookupSpeciesFromName(card?.name, speciesDexByName);
+    const fallbackName = String(card?.name || "").trim();
+    const speciesKey = species?.slug || normalizePokemonKey(fallbackName);
+
+    if (!speciesKey) {
+      continue;
+    }
+
+    const existing = uniqueBySpecies.get(speciesKey);
+    const cardRarityScore = rarityScore(card?.rarity);
+    const releaseStamp = getSetReleaseTimestamp(card?.set);
+
+    if (!existing) {
+      uniqueBySpecies.set(speciesKey, {
+        id: card.id,
+        speciesKey,
+        name: species?.displayName || fallbackName,
+        images: card.images,
+        rarity: card.rarity,
+        rarityScoreValue: cardRarityScore,
+        set: card.set,
+        number: card.number,
+        supertype: card.supertype,
+        dexNumber: species?.dexNumber || 0,
+        generation: species?.generation || 99,
+        latestSetRelease: releaseStamp,
+        earliestSetRelease: releaseStamp
+      });
+    } else {
+      existing.latestSetRelease = Math.max(existing.latestSetRelease || 0, releaseStamp || 0);
+      if (!existing.earliestSetRelease || (releaseStamp && releaseStamp < existing.earliestSetRelease)) {
+        existing.earliestSetRelease = releaseStamp;
+      }
+
+      if (cardRarityScore > existing.rarityScoreValue) {
+        existing.rarity = card.rarity;
+        existing.rarityScoreValue = cardRarityScore;
+        existing.images = card.images || existing.images;
+        existing.set = card.set || existing.set;
+        existing.number = card.number || existing.number;
+        existing.id = card.id || existing.id;
+      }
+    }
+
+    if (!galleryBySpecies[speciesKey]) {
+      galleryBySpecies[speciesKey] = [];
+    }
+
+    const gallery = galleryBySpecies[speciesKey];
+    if (!gallery.some((item) => item.id === card.id)) {
+      gallery.push({
+        id: card.id,
+        name: card.name,
+        images: card.images,
+        rarity: card.rarity,
+        set: card.set,
+        number: card.number,
+        supertype: card.supertype,
+        latestSetRelease: releaseStamp
+      });
+    }
+  }
+
+  for (const speciesKey of Object.keys(galleryBySpecies)) {
+    galleryBySpecies[speciesKey].sort((left, right) => {
+      const bySet = (right.latestSetRelease || 0) - (left.latestSetRelease || 0);
+      if (bySet) {
+        return bySet;
+      }
+
+      const byRarity = rarityScore(right.rarity) - rarityScore(left.rarity);
+      if (byRarity) {
+        return byRarity;
+      }
+
+      return String(left.name || "").localeCompare(String(right.name || ""));
+    });
+  }
+
+  return {
+    entries: [...uniqueBySpecies.values()].sort((left, right) => left.name.localeCompare(right.name)),
+    galleryBySpecies
+  };
+}
+
+async function ensureSpeciesDexMapLoaded() {
+  if (state.pokedex.speciesMapLoaded) {
+    return;
+  }
+
+  const now = Date.now();
+  try {
+    const cachedRaw = localStorage.getItem(STORAGE_KEY_POKEAPI_SPECIES);
+    if (cachedRaw) {
+      const cached = JSON.parse(cachedRaw);
+      const map = cached?.map;
+      const fetchedAt = Number(cached?.fetchedAt || 0);
+      const isFresh = now - fetchedAt < 1000 * 60 * 60 * 24 * 14;
+      if (map && typeof map === "object" && isFresh) {
+        state.pokedex.speciesDexByName = map;
+        state.pokedex.speciesDexByCompact = buildCompactSpeciesMap(map);
+        state.pokedex.speciesMapLoaded = true;
+        return;
+      }
+    }
+  } catch {
+    // ignore cache parse errors
+  }
+
+  try {
+    const response = await fetch("https://pokeapi.co/api/v2/pokemon-species?limit=2000");
+    if (!response.ok) {
+      throw new Error("Unable to load species map");
+    }
+
+    const payload = await response.json();
+    const map = {};
+    for (const item of payload.results || []) {
+      const name = String(item?.name || "").trim();
+      const dexNumber = extractDexNumberFromUrl(item?.url);
+      if (name && dexNumber) {
+        map[name] = dexNumber;
+      }
+    }
+
+    state.pokedex.speciesDexByName = map;
+    state.pokedex.speciesDexByCompact = buildCompactSpeciesMap(map);
+    try {
+      localStorage.setItem(
+        STORAGE_KEY_POKEAPI_SPECIES,
+        JSON.stringify({
+          fetchedAt: now,
+          map
+        })
+      );
+    } catch {
+      // ignore storage quota errors
+    }
+  } catch {
+    state.pokedex.speciesDexByName = {};
+    state.pokedex.speciesDexByCompact = {};
+  } finally {
+    state.pokedex.speciesMapLoaded = true;
+  }
+}
+
+function getOwnedPokedexSpeciesSet() {
+  const ownedCardIds = new Set(state.binder.map((item) => item.id));
+  const owned = new Set();
+  for (const entry of state.pokedex.entries) {
+    const speciesCards = state.pokedex.galleryBySpecies[entry.speciesKey] || [];
+    if (speciesCards.some((card) => ownedCardIds.has(card.id))) {
+      owned.add(entry.speciesKey);
+    }
+  }
+  return owned;
+}
+
+function sortPokedexEntries(entries, ownedSpecies) {
+  const list = [...entries];
+  const sortMode = state.pokedex.sort;
+
+  list.sort((left, right) => {
+    const leftOwned = ownedSpecies.has(left.speciesKey) ? 1 : 0;
+    const rightOwned = ownedSpecies.has(right.speciesKey) ? 1 : 0;
+
+    switch (sortMode) {
+      case "generation_asc":
+        return (
+          (left.generation || 99) - (right.generation || 99) ||
+          (left.dexNumber || 9999) - (right.dexNumber || 9999) ||
+          left.name.localeCompare(right.name)
+        );
+      case "generation_desc":
+        return (
+          (right.generation || 0) - (left.generation || 0) ||
+          (right.dexNumber || 0) - (left.dexNumber || 0) ||
+          left.name.localeCompare(right.name)
+        );
+      case "name_desc":
+        return right.name.localeCompare(left.name);
+      case "rarity_desc":
+        return (right.rarityScoreValue || 0) - (left.rarityScoreValue || 0) || left.name.localeCompare(right.name);
+      case "rarity_asc":
+        return (left.rarityScoreValue || 0) - (right.rarityScoreValue || 0) || left.name.localeCompare(right.name);
+      case "owned_first":
+        return rightOwned - leftOwned || left.name.localeCompare(right.name);
+      case "missing_first":
+        return leftOwned - rightOwned || left.name.localeCompare(right.name);
+      case "set_newest":
+        return (right.latestSetRelease || 0) - (left.latestSetRelease || 0) || left.name.localeCompare(right.name);
+      case "set_oldest":
+        return (left.earliestSetRelease || Number.MAX_SAFE_INTEGER) - (right.earliestSetRelease || Number.MAX_SAFE_INTEGER) || left.name.localeCompare(right.name);
+      case "name_asc":
+      default:
+        return left.name.localeCompare(right.name);
+    }
+  });
+
+  return list;
+}
+
+async function ensurePokedexLoaded() {
+  if (state.pokedex.loading || state.pokedex.loaded) {
+    return;
+  }
+
+  state.pokedex.loading = true;
+  state.pokedex.error = "";
+  renderPokedex();
+
+  try {
+    await ensureSpeciesDexMapLoaded();
+    const cards = await fetchAllCollectionCards({
+      sort: "name_asc",
+      pageSize: 120,
+      maxPages: 120
+    });
+
+    const pokedexData = buildPokedexEntries(cards, state.pokedex.speciesDexByName);
+    state.pokedex.entries = pokedexData.entries;
+    state.pokedex.galleryBySpecies = pokedexData.galleryBySpecies;
+    state.pokedex.loaded = true;
+  } catch (error) {
+    state.pokedex.error = error.message || "Could not load pokedex.";
+  } finally {
+    state.pokedex.loading = false;
+    renderPokedex();
+  }
+}
+
+function getPokedexCoverCard(entry, ownedSpecies, ownedCardIds) {
+  const gallery = state.pokedex.galleryBySpecies[entry.speciesKey] || [];
+  const preferredCardId = state.pokedex.previewCardBySpecies[entry.speciesKey];
+
+  if (preferredCardId) {
+    const preferred = gallery.find((card) => card.id === preferredCardId);
+    if (preferred && ownedCardIds.has(preferred.id)) {
+      return preferred;
+    }
+  }
+
+  if (ownedSpecies.has(entry.speciesKey)) {
+    const ownedCover = gallery.find((card) => ownedCardIds.has(card.id));
+    if (ownedCover) {
+      return ownedCover;
+    }
+  }
+
+  return entry;
+}
+
+function closePokedexGallery() {
+  state.pokedex.selectedSpeciesKey = "";
+  renderPokedex();
+}
+
+function openPokedexGallery(speciesKey) {
+  if (!speciesKey) {
+    return;
+  }
+
+  state.pokedex.selectedSpeciesKey =
+    state.pokedex.selectedSpeciesKey === speciesKey ? "" : speciesKey;
+  renderPokedex();
+}
+
+function renderPokedexGallery() {
+  if (
+    !el.pokedexGalleryPanel ||
+    !el.pokedexGalleryTitle ||
+    !el.pokedexGalleryMeta ||
+    !el.pokedexGalleryGrid
+  ) {
+    return;
+  }
+
+  el.pokedexGalleryGrid.innerHTML = "";
+  if (el.pokedexLayout) {
+    el.pokedexLayout.classList.remove("has-gallery");
+  }
+
+  const speciesKey = state.pokedex.selectedSpeciesKey;
+  if (!speciesKey) {
+    el.pokedexGalleryPanel.hidden = true;
+    return;
+  }
+
+  const entry = state.pokedex.entries.find((item) => item.speciesKey === speciesKey);
+  const gallery = state.pokedex.galleryBySpecies[speciesKey] || [];
+  const ownedCardIds = new Set(state.binder.map((item) => item.id));
+
+  el.pokedexGalleryPanel.hidden = false;
+  if (el.pokedexLayout) {
+    el.pokedexLayout.classList.add("has-gallery");
+  }
+  el.pokedexGalleryTitle.textContent = entry?.name ? `${entry.name} Gallery` : "Pokemon Gallery";
+
+  const ownedCount = gallery.filter((card) => ownedCardIds.has(card.id)).length;
+  el.pokedexGalleryMeta.textContent = `${ownedCount}/${gallery.length} obtained. Gray cards are still missing.`;
+
+  if (!gallery.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No cards found for this Pokemon yet.";
+    el.pokedexGalleryGrid.appendChild(empty);
+    return;
+  }
+
+  const currentPreviewCardId = state.pokedex.previewCardBySpecies[speciesKey] || "";
+  const fragment = document.createDocumentFragment();
+
+  for (const card of gallery) {
+    const owned = ownedCardIds.has(card.id);
+
+    const item = document.createElement("article");
+    item.className = "pokedex-gallery-card";
+    item.classList.toggle("is-unobtained", !owned);
+    item.classList.toggle("is-preview", currentPreviewCardId === card.id);
+
+    const imageButton = document.createElement("button");
+    imageButton.type = "button";
+    imageButton.className = "pokedex-gallery-image-btn";
+    imageButton.addEventListener("click", () => {
+      openCardModal(card, { grayscale: !owned });
+    });
+
+    const image = document.createElement("img");
+    image.loading = "lazy";
+    image.src = card.images?.small || "";
+    image.alt = `${card.name} card`;
+    imageButton.appendChild(image);
+    item.appendChild(imageButton);
+
+    const meta = document.createElement("p");
+    meta.className = "pokedex-gallery-meta";
+    meta.textContent = `${card.set?.name || "Set"} | ${card.rarity || "Unknown"}`;
+    item.appendChild(meta);
+
+    if (owned) {
+      const previewBtn = document.createElement("button");
+      previewBtn.type = "button";
+      previewBtn.className = "pokedex-preview-btn";
+      previewBtn.textContent = currentPreviewCardId === card.id ? "Using as Preview" : "Use as Preview";
+      previewBtn.disabled = currentPreviewCardId === card.id;
+      previewBtn.addEventListener("click", () => {
+        state.pokedex.previewCardBySpecies[speciesKey] = card.id;
+        saveBinder();
+        renderPokedex();
+        renderPokedexGallery();
+      });
+      item.appendChild(previewBtn);
+    }
+
+    fragment.appendChild(item);
+  }
+
+  el.pokedexGalleryGrid.appendChild(fragment);
+}
+
+function renderPokedex() {
+  if (!el.pokedexGrid || !el.pokedexMeta) {
+    return;
+  }
+
+  el.pokedexGrid.innerHTML = "";
+
+  if (el.pokedexSort && el.pokedexSort.value !== state.pokedex.sort) {
+    el.pokedexSort.value = state.pokedex.sort;
+  }
+
+  if (state.pokedex.loading) {
+    el.pokedexMeta.textContent = "Loading all Pokemon entries...";
+    const loading = document.createElement("div");
+    loading.className = "empty-state";
+    loading.textContent = "Loading Pokedex...";
+    el.pokedexGrid.appendChild(loading);
+    renderPokedexGallery();
+    return;
+  }
+
+  if (state.pokedex.error) {
+    el.pokedexMeta.textContent = "Failed to load Pokedex.";
+    const error = document.createElement("div");
+    error.className = "empty-state";
+    error.textContent = state.pokedex.error;
+    el.pokedexGrid.appendChild(error);
+    renderPokedexGallery();
+    return;
+  }
+
+  if (!state.pokedex.entries.length) {
+    el.pokedexMeta.textContent = "No Pokemon data loaded yet.";
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No Pokemon entries available.";
+    el.pokedexGrid.appendChild(empty);
+    renderPokedexGallery();
+    return;
+  }
+
+  const ownedSpecies = getOwnedPokedexSpeciesSet();
+  const ownedCardIds = new Set(state.binder.map((item) => item.id));
+  const sortedEntries = sortPokedexEntries(state.pokedex.entries, ownedSpecies);
+  const ownedCount = sortedEntries.filter((entry) => ownedSpecies.has(entry.speciesKey)).length;
+  el.pokedexMeta.textContent = `${ownedCount}/${sortedEntries.length} Pokemon unlocked`;
+
+  const fragment = document.createDocumentFragment();
+  for (const entry of sortedEntries) {
+    const owned = ownedSpecies.has(entry.speciesKey);
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "pokedex-item";
+    item.classList.toggle("is-unobtained", !owned);
+    item.setAttribute("aria-label", `${entry.name} (${owned ? "owned" : "missing"})`);
+    item.addEventListener("click", () => {
+      openPokedexGallery(entry.speciesKey);
+    });
+
+    item.classList.toggle("is-selected", state.pokedex.selectedSpeciesKey === entry.speciesKey);
+
+    const coverCard = getPokedexCoverCard(entry, ownedSpecies, ownedCardIds);
+
+    const image = document.createElement("img");
+    image.loading = "lazy";
+    image.src = coverCard.images?.small || entry.images?.small || "";
+    image.alt = `${entry.name} pokedex card`;
+    item.appendChild(image);
+
+    const name = document.createElement("p");
+    name.textContent = entry.name;
+    item.appendChild(name);
+
+    fragment.appendChild(item);
+  }
+
+  el.pokedexGrid.appendChild(fragment);
+  renderPokedexGallery();
 }
 
 function renderTrainerAvatar() {
@@ -1535,8 +2393,8 @@ function renderTrainerAvatar() {
 
   el.trainerAvatarImage.hidden = true;
   el.trainerAvatarImage.removeAttribute("src");
-  const ignInitial = String(state.profile.ign || "").trim().charAt(0).toUpperCase();
-  el.trainerAvatarInitial.textContent = ignInitial || "?";
+  const seed = String(state.profile.ign || "").trim();
+  el.trainerAvatarInitial.textContent = seed.charAt(0).toUpperCase() || "?";
   el.trainerAvatarInitial.hidden = false;
 }
 
@@ -1556,6 +2414,7 @@ function upsertBinderCard(card, quantity = 1) {
     if (!existing.tcgplayer && card.tcgplayer) {
       existing.tcgplayer = card.tcgplayer;
     }
+    invalidateGoalProgressCache();
     return;
   }
 
@@ -1578,6 +2437,8 @@ function upsertBinderCard(card, quantity = 1) {
     addedAt: Date.now(),
     updatedAt: Date.now()
   });
+
+  invalidateGoalProgressCache();
 }
 
 function createCardElement(card) {
@@ -1608,6 +2469,20 @@ function createCardElement(card) {
   image.src = card.images?.small || "";
   image.alt = `${card.name} trading card`;
   article.appendChild(image);
+
+  const favoriteBtn = document.createElement("button");
+  favoriteBtn.type = "button";
+  favoriteBtn.className = "favorite-toggle";
+  favoriteBtn.classList.toggle("is-active", isFavoriteCard(card.id));
+  favoriteBtn.textContent = isFavoriteCard(card.id) ? "★" : "☆";
+  favoriteBtn.setAttribute(
+    "aria-label",
+    isFavoriteCard(card.id) ? `Remove ${card.name} from favorites` : `Add ${card.name} to favorites`
+  );
+  favoriteBtn.addEventListener("click", () => {
+    toggleFavoriteCard(card);
+  });
+  article.appendChild(favoriteBtn);
 
   const name = document.createElement("h3");
   name.textContent = card.name;
@@ -2642,14 +3517,18 @@ function endPackRip(event) {
 function createGachaCardElement(card, options = {}) {
   const isRarest = Boolean(options.isRarest);
   const glowTier = rarityGlowTier(card.rarity);
+  const isSuperHit = glowTier === "ultra";
+  const shouldRarestHighlight = isRarest && isSuperHit;
   const container = document.createElement("article");
   container.className = "gacha-card";
-  container.classList.add(`rarity-${glowTier}`);
-  if (isRarest) {
+  if (isSuperHit) {
+    container.classList.add(`rarity-${glowTier}`);
+  }
+  if (shouldRarestHighlight) {
     container.classList.add("is-rarest");
   }
 
-  if (glowTier !== "base") {
+  if (isSuperHit) {
     const glare = document.createElement("span");
     glare.className = `gacha-card-glare glare-${glowTier}`;
     glare.setAttribute("aria-hidden", "true");
@@ -2774,20 +3653,24 @@ function showRevealCard() {
   const isRarestCard =
     Boolean(state.gacha.rarestPullCardId) && item.card.id === state.gacha.rarestPullCardId;
   const revealTier = rarityGlowTier(item.card.rarity);
+  const isSuperHit = revealTier === "ultra";
 
   el.modalFlipCard.classList.remove("reveal-tier-rare", "reveal-tier-holo", "reveal-tier-ultra");
-  if (revealTier !== "base") {
+  if (isSuperHit) {
     el.modalFlipCard.classList.add(`reveal-tier-${revealTier}`);
   }
 
-  el.modalTiltCard.classList.toggle("is-rarest-reveal", isRarestCard);
-  el.modalFlipCard.classList.toggle("is-rarest-reveal", isRarestCard);
+  el.modalTiltCard.classList.toggle("is-rarest-reveal", isRarestCard && isSuperHit);
+  el.modalFlipCard.classList.toggle("is-rarest-reveal", isRarestCard && isSuperHit);
 
   const accent = rarityAccent(item.card.rarity);
   el.modalRevealRarity.textContent = item.card.rarity || "Unknown rarity";
   el.modalRevealRarity.style.background = accent.background;
   el.modalRevealRarity.style.borderColor = accent.border;
-  el.gachaStatus.textContent = "Swipe this card away to reveal the next card.";
+  const isLastCard = state.gacha.revealIndex >= state.gacha.revealQueue.length - 1;
+  el.gachaStatus.textContent = isLastCard
+    ? "Last card. Click anywhere to finish."
+    : "Swipe this card away to reveal the next card.";
 
   setModalRevealMode(true);
   el.cardModal.classList.add("is-open");
@@ -2834,7 +3717,10 @@ function revealCurrentCardFront() {
   el.modalRevealRarity.textContent = item.card.rarity || "Unknown rarity";
   el.modalRevealRarity.style.background = accent.background;
   el.modalRevealRarity.style.borderColor = accent.border;
-  el.gachaStatus.textContent = "Great. Now swipe cards away for each next reveal.";
+  const isLastCard = state.gacha.revealIndex >= state.gacha.revealQueue.length - 1;
+  el.gachaStatus.textContent = isLastCard
+    ? "Last card. Click anywhere to finish."
+    : "Great. Now swipe cards away for each next reveal.";
 }
 
 function finishGachaReveal() {
@@ -3028,7 +3914,324 @@ function addGachaPullsToBinder() {
   state.gacha.pullsAddedToBinder = true;
   updateAddToBinderButtonState();
   el.gachaStatus.textContent = `${pulledCards.length} pulled cards added to your binder.`;
+  invalidateGoalProgressCache();
+  renderCollectionGoals();
   return pulledCards.length;
+}
+
+function getGoalCacheKey(goal) {
+  return `${goal.type}|${goal.keyword.toLowerCase()}|${goal.setId}`;
+}
+
+async function resolveGoalCards(goal) {
+  const keyword = goal.keyword.trim();
+
+  if (goal.type === "set" && goal.setId) {
+    return fetchAllCollectionCards({
+      setId: goal.setId,
+      sort: "name_asc"
+    });
+  }
+
+  if (goal.type === "pokemon") {
+    if (!keyword) {
+      return [];
+    }
+
+    const cards = await fetchAllCollectionCards({
+      search: keyword,
+      sort: "name_asc"
+    });
+
+    const lowered = keyword.toLowerCase();
+    return cards.filter((card) => String(card.name || "").toLowerCase().includes(lowered));
+  }
+
+  if (goal.type === "custom") {
+    let cards = [];
+    if (goal.setId) {
+      cards = await fetchAllCollectionCards({
+        setId: goal.setId,
+        sort: "name_asc"
+      });
+    } else if (keyword) {
+      cards = await fetchAllCollectionCards({
+        search: keyword,
+        sort: "name_asc"
+      });
+    }
+
+    if (!keyword) {
+      return cards;
+    }
+
+    const lowered = keyword.toLowerCase();
+    return cards.filter((card) => {
+      const name = String(card.name || "").toLowerCase();
+      const rarity = String(card.rarity || "").toLowerCase();
+      const setName = String(card.set?.name || "").toLowerCase();
+      return name.includes(lowered) || rarity.includes(lowered) || setName.includes(lowered);
+    });
+  }
+
+  return [];
+}
+
+async function getCollectionGoalProgress(goal) {
+  const cacheKey = getGoalCacheKey(goal);
+  const cached = state.goalProgressCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const cards = await resolveGoalCards(goal);
+  const uniqueMap = new Map();
+  for (const card of cards) {
+    if (card?.id && !uniqueMap.has(card.id)) {
+      uniqueMap.set(card.id, card);
+    }
+  }
+
+  const uniqueCards = [...uniqueMap.values()];
+  const ownedCards = uniqueCards.filter((card) => getBinderEntry(card.id));
+  const completion = uniqueCards.length
+    ? Math.min((ownedCards.length / uniqueCards.length) * 100, 100)
+    : 0;
+
+  const data = {
+    total: uniqueCards.length,
+    owned: ownedCards.length,
+    completion,
+    cards: uniqueCards.map((card) => ({
+      id: card.id,
+      name: card.name,
+      images: card.images,
+      set: card.set,
+      rarity: card.rarity,
+      number: card.number
+    }))
+  };
+
+  state.goalProgressCache.set(cacheKey, data);
+  return data;
+}
+
+function createGoalCard(goal) {
+  const card = document.createElement("article");
+  card.className = "goal-card";
+  card.dataset.goalId = goal.id;
+  card.classList.toggle("is-open", isGoalOpen(goal.id));
+
+  if (goal.boardImage) {
+    card.style.setProperty("--goal-bg", `url(${goal.boardImage})`);
+    card.classList.add("has-board-image");
+  }
+
+  const overlay = document.createElement("div");
+  overlay.className = "goal-card-overlay";
+
+  const cover = document.createElement("div");
+  cover.className = "goal-card-cover";
+
+  const titleRow = document.createElement("div");
+  titleRow.className = "goal-title-row";
+
+  const title = document.createElement("button");
+  title.type = "button";
+  title.className = "goal-title-btn";
+  title.textContent = goal.title;
+  title.setAttribute("aria-label", `Edit title for ${goal.title}`);
+  title.addEventListener("click", () => {
+    const nextTitle = window.prompt("Goal title", goal.title);
+    if (nextTitle === null) {
+      return;
+    }
+
+    const trimmed = nextTitle.trim().slice(0, 50);
+    if (!trimmed) {
+      return;
+    }
+
+    goal.title = trimmed;
+    goal.updatedAt = Date.now();
+    saveBinder();
+    renderCollectionGoals();
+  });
+  titleRow.appendChild(title);
+
+  const toggleBtn = document.createElement("button");
+  toggleBtn.type = "button";
+  toggleBtn.className = "goal-toggle-btn";
+  toggleBtn.textContent = isGoalOpen(goal.id) ? "Close" : "Open";
+  toggleBtn.addEventListener("click", () => {
+    setGoalOpen(goal.id, !isGoalOpen(goal.id));
+    renderCollectionGoals();
+  });
+  titleRow.appendChild(toggleBtn);
+
+  cover.appendChild(titleRow);
+
+  const descriptor = document.createElement("p");
+  const setName = state.sets.find((set) => set.id === goal.setId)?.name;
+  if (goal.type === "set") {
+    descriptor.textContent = setName ? `Complete set: ${setName}` : "Complete set goal";
+  } else if (goal.type === "pokemon") {
+    descriptor.textContent = goal.keyword ? `Collect all ${goal.keyword}` : "Pokemon goal";
+  } else {
+    descriptor.textContent = goal.keyword
+      ? `Custom search: ${goal.keyword}`
+      : "Custom collection goal";
+  }
+  cover.appendChild(descriptor);
+
+  const progress = document.createElement("p");
+  progress.className = "goal-progress";
+  progress.textContent = "Loading progress...";
+  cover.appendChild(progress);
+
+  const details = document.createElement("div");
+  details.className = "goal-card-details";
+
+  const checklist = document.createElement("div");
+  checklist.className = "goal-checklist-grid";
+  details.appendChild(checklist);
+
+  overlay.appendChild(cover);
+  overlay.appendChild(details);
+  card.appendChild(overlay);
+
+  void getCollectionGoalProgress(goal)
+    .then((result) => {
+      if (!el.goalGrid?.contains(card)) {
+        return;
+      }
+      progress.textContent = `${result.owned} / ${result.total} cards (${result.completion.toFixed(1)}%)`;
+
+      checklist.innerHTML = "";
+      if (!result.cards.length) {
+        const empty = document.createElement("p");
+        empty.className = "goal-checklist-empty";
+        empty.textContent = "No cards found for this goal yet.";
+        checklist.appendChild(empty);
+        return;
+      }
+
+      const fragment = document.createDocumentFragment();
+      for (const previewCard of result.cards) {
+        const hasEntry = Boolean(getBinderEntry(previewCard.id));
+
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "goal-check-item";
+        item.classList.toggle("is-unlocked", hasEntry);
+        item.classList.toggle("is-locked", !hasEntry);
+        item.setAttribute("aria-label", `${previewCard.name} (${hasEntry ? "owned" : "missing"})`);
+
+        const image = document.createElement("img");
+        image.loading = "lazy";
+        image.src = previewCard.images?.small || "";
+        image.alt = `${previewCard.name} card`;
+        item.appendChild(image);
+
+        const number = document.createElement("span");
+        number.className = "goal-check-number";
+        number.textContent = `#${previewCard.number || "?"}`;
+        item.appendChild(number);
+
+        if (hasEntry) {
+          const mark = document.createElement("span");
+          mark.className = "goal-check-mark";
+          mark.textContent = "✓";
+          item.appendChild(mark);
+        }
+
+        item.addEventListener("click", () => {
+          openCardModal(previewCard, { grayscale: !hasEntry });
+        });
+
+        fragment.appendChild(item);
+      }
+
+      checklist.appendChild(fragment);
+    })
+    .catch((error) => {
+      if (!el.goalGrid?.contains(card)) {
+        return;
+      }
+      progress.textContent = `Could not load progress: ${error.message}`;
+    });
+
+  return card;
+}
+
+function renderCollectionGoals() {
+  if (!el.goalGrid) {
+    return;
+  }
+
+  state.goalOpenIds = state.goalOpenIds.filter((openId) =>
+    state.collectionGoals.some((goal) => goal.id === openId)
+  );
+
+  el.goalGrid.innerHTML = "";
+  if (!state.collectionGoals.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No goal boards yet. Add one to start your custom collection challenge.";
+    el.goalGrid.appendChild(empty);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  for (const goal of state.collectionGoals) {
+    fragment.appendChild(createGoalCard(goal));
+  }
+  el.goalGrid.appendChild(fragment);
+}
+
+async function addCollectionGoalFromForm() {
+  if (!el.goalTitleInput || !el.goalTypeSelect || !el.goalKeywordInput || !el.goalSetSelect) {
+    return;
+  }
+
+  const title = String(el.goalTitleInput.value || "").trim().slice(0, 50);
+  const type = String(el.goalTypeSelect.value || "pokemon");
+  const keyword = String(el.goalKeywordInput.value || "").trim().slice(0, 40);
+  const setId = String(el.goalSetSelect.value || "");
+
+  if (!title) {
+    window.alert("Please add a goal title.");
+    return;
+  }
+
+  if (type === "pokemon" && !keyword) {
+    window.alert("Pokemon goals need a keyword like Gengar.");
+    return;
+  }
+
+  if (type === "set" && !setId) {
+    window.alert("Set goals need a selected set.");
+    return;
+  }
+
+  state.collectionGoals.unshift(
+    normalizeCollectionGoal({
+      id: generateCollectionGoalId(),
+      title,
+      type,
+      keyword,
+      setId,
+      boardImage: "",
+      updatedAt: Date.now()
+    })
+  );
+
+  invalidateGoalProgressCache();
+  saveBinder();
+  renderCollectionGoals();
+
+  el.goalTitleInput.value = "";
+  el.goalKeywordInput.value = "";
 }
 
 function getFilteredBinder() {
@@ -3139,13 +4342,28 @@ function createBinderItem(card, entry) {
   const actions = document.createElement("div");
   actions.className = "binder-slot-actions";
 
+  const favoriteBtn = document.createElement("button");
+  favoriteBtn.type = "button";
+  favoriteBtn.className = "favorite-toggle";
+  favoriteBtn.classList.toggle("is-active", isFavoriteCard(card.id));
+  favoriteBtn.textContent = isFavoriteCard(card.id) ? "★" : "☆";
+  favoriteBtn.setAttribute(
+    "aria-label",
+    isFavoriteCard(card.id) ? `Remove ${card.name} from favorites` : `Add ${card.name} to favorites`
+  );
+  favoriteBtn.addEventListener("click", () => {
+    toggleFavoriteCard(card);
+  });
+  actions.appendChild(favoriteBtn);
+
   if (entry) {
     const qty = document.createElement("span");
     qty.className = "binder-slot-qty";
     qty.textContent = `Copies owned: ${toPositiveInt(entry.ownedQty, 1)}`;
     actions.appendChild(qty);
-    meta.appendChild(actions);
   }
+
+  meta.appendChild(actions);
 
   item.appendChild(meta);
 
@@ -3192,14 +4410,16 @@ function renderBinder() {
     (sum, entry) => sum + toPositiveInt(entry.ownedQty, 1),
     0
   );
-  const active = getActiveBinderRecord();
-  el.binderStats.textContent = `${ownedInCollection} / ${totalSlots} obtained | ${totalCopies} total copies${active ? ` | ${active.name}` : ""}`;
+  el.binderStats.textContent = `${ownedInCollection} / ${totalSlots} obtained | ${totalCopies} total copies`;
 
+  renderCollectionGoals();
+  renderPokedex();
   renderDashboard();
 }
 
 function removeBinderEntry(cardId) {
   state.binder = state.binder.filter((entry) => entry.id !== cardId);
+  invalidateGoalProgressCache();
   saveBinder();
   renderCards();
   renderBinder();
@@ -3219,6 +4439,7 @@ function updateBinderQuantity(cardId, nextQty) {
 
   entry.ownedQty = Math.min(99, qty);
   entry.updatedAt = Date.now();
+  invalidateGoalProgressCache();
   saveBinder();
   renderCards();
   renderBinder();
@@ -3278,12 +4499,24 @@ function attachEvents() {
   }
 
   el.cardModal.addEventListener("click", (event) => {
+    const isLastFrontCard =
+      state.gacha.revealing &&
+      state.gacha.revealStage === "front" &&
+      state.gacha.revealIndex >= state.gacha.revealQueue.length - 1;
+
+    if (isLastFrontCard) {
+      finishGachaReveal();
+      return;
+    }
+
     if (event.target.hasAttribute("data-close-modal")) {
       if (state.gacha.revealing) {
         el.gachaStatus.textContent =
           state.gacha.revealStage === "back"
             ? "Tap card to flip all first."
-            : "Swipe the card away to reveal the next one.";
+            : isLastFrontCard
+              ? "Last card. Click anywhere to finish."
+              : "Swipe the card away to reveal the next one.";
         return;
       }
 
@@ -3346,17 +4579,12 @@ function attachEvents() {
     });
   }
 
-  if (el.gachaCloseReviewBtn) {
-    el.gachaCloseReviewBtn.addEventListener("click", () => {
-      hideGachaDrawReview();
-    });
-  }
-
   if (el.gachaAddToBinderBtn) {
     el.gachaAddToBinderBtn.addEventListener("click", () => {
       const addedCount = addGachaPullsToBinder();
       if (addedCount) {
         el.gachaStatus.textContent = `${addedCount} pulled cards added to your binder.`;
+        hideGachaDrawReview();
       }
     });
   }
@@ -3389,6 +4617,16 @@ function attachEvents() {
   el.modalFlipCard.addEventListener("click", () => {
     if (state.gacha.revealing && state.gacha.revealStage === "back") {
       revealCurrentCardFront();
+      return;
+    }
+
+    if (
+      state.gacha.revealing &&
+      state.gacha.revealStage === "front" &&
+      state.gacha.revealIndex >= state.gacha.revealQueue.length - 1
+    ) {
+      finishGachaReveal();
+      return;
     }
   });
   if (el.modalRevealSkipBtn) {
@@ -3424,6 +4662,23 @@ function attachEvents() {
     state.page = 1;
     refreshCards();
   });
+
+  if (el.pokedexSort) {
+    el.pokedexSort.addEventListener("change", (event) => {
+      const sortValue = String(event.target.value || "generation_asc");
+      state.pokedex.sort = POKEDEX_SORT_OPTIONS.includes(sortValue)
+        ? sortValue
+        : "generation_asc";
+      saveBinder();
+      renderPokedex();
+    });
+  }
+
+  if (el.pokedexGalleryCloseBtn) {
+    el.pokedexGalleryCloseBtn.addEventListener("click", () => {
+      closePokedexGallery();
+    });
+  }
 
   el.prevPage.addEventListener("click", () => {
     if (state.page <= 1) {
@@ -3472,11 +4727,36 @@ function attachEvents() {
     });
   }
 
-  if (el.trainerIgn) {
-    el.trainerIgn.addEventListener("input", (event) => {
-      state.profile.ign = String(event.target.value || "").slice(0, 30);
+  if (el.trainerIgnEditBtn) {
+    el.trainerIgnEditBtn.addEventListener("click", () => {
+      const nextIgn = window.prompt("Set your IGN", state.profile.ign || "");
+      if (nextIgn === null) {
+        return;
+      }
+
+      state.profile.ign = String(nextIgn || "").trim().slice(0, 30);
       saveBinder();
       renderDashboard();
+    });
+  }
+
+  if (el.goalTypeSelect && el.goalKeywordInput && el.goalSetSelect) {
+    const syncGoalFields = () => {
+      const type = String(el.goalTypeSelect.value || "pokemon");
+      el.goalKeywordInput.disabled = type === "set";
+      el.goalSetSelect.disabled = false;
+      if (type === "set") {
+        el.goalKeywordInput.value = "";
+      }
+    };
+
+    el.goalTypeSelect.addEventListener("change", syncGoalFields);
+    syncGoalFields();
+  }
+
+  if (el.addGoalBtn) {
+    el.addGoalBtn.addEventListener("click", () => {
+      void addCollectionGoalFromForm();
     });
   }
 
@@ -3580,6 +4860,7 @@ function attachEvents() {
     }
 
     state.binder = [];
+    invalidateGoalProgressCache();
     saveBinder();
     renderCards();
     renderBinder();
@@ -3588,6 +4869,15 @@ function attachEvents() {
 
 async function initialize() {
   loadBinderState();
+  let shouldPersistProfile = false;
+  if (!state.profile.uid) {
+    state.profile.uid = generateTrainerUid();
+    shouldPersistProfile = true;
+  }
+  state.profile.favoriteCardIds = normalizeFavoriteCardIds(state.profile.favoriteCardIds);
+  if (shouldPersistProfile) {
+    saveBinder();
+  }
   state.gacha.packCount = 1;
   attachEvents();
   updateGachaInfoVisibility();
@@ -3595,11 +4885,16 @@ async function initialize() {
   updateAddToBinderButtonState();
   updateGachaBounceLabel();
   renderBinderPicker();
+  renderPokedex();
   renderDashboard();
 
   if (el.binderCollectionPreset) {
     el.binderCollectionPreset.value = state.binderCollection.preset;
   }
+  if (el.pokedexSort) {
+    el.pokedexSort.value = state.pokedex.sort;
+  }
+  renderCollectionGoals();
 
   const defaultLink =
     sidebarLinks.find((link) => link.classList.contains("is-active")) ||
@@ -3631,6 +4926,7 @@ async function initialize() {
     el.binderCollectionPreset.value = state.binderCollection.preset;
   }
   renderCollectionSetOptions();
+  renderGoalSetOptions();
   void loadBinderCollectionCards();
 
   try {
@@ -3642,6 +4938,8 @@ async function initialize() {
     el.gachaStatus.textContent =
       "Could not load pack list. Check your data source and try again.";
   }
+
+  void ensurePokedexLoaded();
 
   await refreshCards();
   renderBinder();
