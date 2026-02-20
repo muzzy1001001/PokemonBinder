@@ -1235,34 +1235,82 @@ function setModalRevealMode(enabled) {
   }
 }
 
+function sanitizeImageCandidateUrl(value) {
+  const url = String(value || "").trim();
+  if (!url) {
+    return "";
+  }
+
+  if (/^https?:\/\//i.test(url)) {
+    return url;
+  }
+
+  if (url.startsWith("/")) {
+    if (url.startsWith("/assets/cards/")) {
+      return "";
+    }
+    return url;
+  }
+
+  return "";
+}
+
+function cardIdImageFallbackUrls(card, preferLarge = true) {
+  const cardId = String(card?.id || "").trim();
+  const [setIdRaw, ...numberParts] = cardId.split("-");
+  const setId = setIdRaw.trim();
+  const number = numberParts.join("-").trim();
+
+  if (!setId || !number) {
+    return [];
+  }
+
+  const encodedSetId = encodeURIComponent(setId);
+  const encodedNumber = encodeURIComponent(number);
+  const large = `https://images.pokemontcg.io/${encodedSetId}/${encodedNumber}_hires.png`;
+  const small = `https://images.pokemontcg.io/${encodedSetId}/${encodedNumber}.png`;
+  return preferLarge ? [large, small] : [small, large];
+}
+
 function cardImageCandidateUrls(card, preferLarge = true) {
-  const large = String(card?.images?.large || "").trim();
-  const small = String(card?.images?.small || "").trim();
-  return preferLarge ? [large, small].filter(Boolean) : [small, large].filter(Boolean);
+  const large = sanitizeImageCandidateUrl(card?.images?.large);
+  const small = sanitizeImageCandidateUrl(card?.images?.small);
+  const fallbackUrls = cardIdImageFallbackUrls(card, preferLarge);
+  const ordered = preferLarge ? [large, small, ...fallbackUrls] : [small, large, ...fallbackUrls];
+  const unique = [];
+  const seen = new Set();
+  for (const url of ordered) {
+    if (!url || seen.has(url)) {
+      continue;
+    }
+    seen.add(url);
+    unique.push(url);
+  }
+  return unique;
 }
 
 function applyCardImageSource(imageElement, card, options = {}) {
   const preferLarge = options.preferLarge !== false;
-  const [primaryUrl = "", fallbackUrl = ""] = cardImageCandidateUrls(card, preferLarge);
+  const candidateUrls = cardImageCandidateUrls(card, preferLarge);
 
   imageElement.onerror = null;
-  if (!primaryUrl) {
+  if (!candidateUrls.length) {
     imageElement.removeAttribute("src");
     return;
   }
 
-  if (fallbackUrl && fallbackUrl !== primaryUrl) {
-    imageElement.onerror = () => {
-      if (imageElement.src !== fallbackUrl) {
-        imageElement.src = fallbackUrl;
-        return;
-      }
-
+  let candidateIndex = 0;
+  imageElement.onerror = () => {
+    candidateIndex += 1;
+    if (candidateIndex >= candidateUrls.length) {
       imageElement.onerror = null;
-    };
-  }
+      return;
+    }
 
-  imageElement.src = primaryUrl;
+    imageElement.src = candidateUrls[candidateIndex];
+  };
+
+  imageElement.src = candidateUrls[0];
 }
 
 function setModalCardFace(card, showBackFirst = false, options = {}) {

@@ -23,6 +23,7 @@ const POKEMON_DATA_SOURCE =
 const POKEMON_GITHUB_DATA_DIR =
   process.env.POKEMON_GITHUB_DATA_DIR ||
   path.join(__dirname, "data", "pokemon-tcg-data");
+const API_DOWNLOADS_DATA_DIR = path.join(__dirname, "data", "api-downloads");
 const LOCAL_CARD_IMAGE_BASE_PATH = "/assets/cards";
 const LOCAL_CARD_THUMB_IMAGE_BASE_PATH = "/assets/cards/thumb";
 const LOCAL_CARD_IMAGE_DIR = path.join(__dirname, "public", "assets", "cards");
@@ -112,6 +113,15 @@ const localDataCache = {
   sets: [],
   cards: [],
   cardsById: new Map()
+};
+
+const snapshotDataCache = {
+  loaded: false,
+  loadingPromise: null,
+  sets: [],
+  cards: [],
+  cardsBySetId: new Map(),
+  sourceDir: ""
 };
 
 const boosterArtCache = {
@@ -1151,6 +1161,139 @@ function hasLocalDataFiles() {
   return fs.existsSync(setsPath) && fs.existsSync(cardsPath);
 }
 
+function hasSnapshotDataFiles() {
+  if (!fs.existsSync(API_DOWNLOADS_DATA_DIR)) {
+    return false;
+  }
+
+  try {
+    const entries = fs.readdirSync(API_DOWNLOADS_DATA_DIR, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+
+      const dirPath = path.join(API_DOWNLOADS_DATA_DIR, entry.name);
+      const packsPath = path.join(dirPath, "packs.sets.json");
+      const cardsPath = path.join(dirPath, "cards.ndjson");
+      if (fs.existsSync(packsPath) && fs.existsSync(cardsPath)) {
+        return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
+
+function setIdFromCardId(cardId) {
+  const sanitized = sanitizeCardId(cardId);
+  if (!sanitized) {
+    return "";
+  }
+
+  const dashIndex = sanitized.indexOf("-");
+  if (dashIndex <= 0) {
+    return "";
+  }
+
+  return sanitizeSetId(sanitized.slice(0, dashIndex));
+}
+
+async function ensureSnapshotDataLoaded() {
+  if (snapshotDataCache.loaded) {
+    return;
+  }
+
+  if (snapshotDataCache.loadingPromise) {
+    await snapshotDataCache.loadingPromise;
+    return;
+  }
+
+  snapshotDataCache.loadingPromise = (async () => {
+    const dirEntries = await fsPromises.readdir(API_DOWNLOADS_DATA_DIR, {
+      withFileTypes: true
+    });
+    const snapshotDirs = dirEntries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort((left, right) => right.localeCompare(left));
+
+    let selectedDir = "";
+    let selectedSetsPath = "";
+    let selectedCardsPath = "";
+
+    for (const dirName of snapshotDirs) {
+      const dirPath = path.join(API_DOWNLOADS_DATA_DIR, dirName);
+      const packsPath = path.join(dirPath, "packs.sets.json");
+      const cardsPath = path.join(dirPath, "cards.ndjson");
+      if (fs.existsSync(packsPath) && fs.existsSync(cardsPath)) {
+        selectedDir = dirPath;
+        selectedSetsPath = packsPath;
+        selectedCardsPath = cardsPath;
+        break;
+      }
+    }
+
+    if (!selectedDir) {
+      throw new Error("Snapshot dataset not found");
+    }
+
+    const setsRaw = await fsPromises.readFile(selectedSetsPath, "utf8");
+    const cardsRaw = await fsPromises.readFile(selectedCardsPath, "utf8");
+
+    const parsedSets = JSON.parse(setsRaw);
+    const sets = Array.isArray(parsedSets?.sets) ? parsedSets.sets : [];
+    const setById = new Map(sets.map((set) => [sanitizeSetId(set?.id), set]));
+    const cards = [];
+
+    const lines = cardsRaw.split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+
+      try {
+        const parsedCard = JSON.parse(trimmed);
+        const setId = sanitizeSetId(parsedCard?.set?.id || setIdFromCardId(parsedCard?.id));
+        const set = setById.get(setId) || parsedCard?.set || null;
+        cards.push({
+          ...parsedCard,
+          set
+        });
+      } catch {
+        continue;
+      }
+    }
+
+    const cardsBySetId = new Map();
+    for (const card of cards) {
+      const setId = sanitizeSetId(card?.set?.id || setIdFromCardId(card?.id));
+      if (!setId) {
+        continue;
+      }
+
+      const bucket = cardsBySetId.get(setId);
+      if (bucket) {
+        bucket.push(card);
+      } else {
+        cardsBySetId.set(setId, [card]);
+      }
+    }
+
+    snapshotDataCache.sets = sets;
+    snapshotDataCache.cards = cards;
+    snapshotDataCache.cardsBySetId = cardsBySetId;
+    snapshotDataCache.sourceDir = selectedDir;
+    snapshotDataCache.loaded = true;
+    snapshotDataCache.loadingPromise = null;
+  })();
+
+  await snapshotDataCache.loadingPromise;
+}
+
 function getActiveSource() {
   if (POKEMON_DATA_SOURCE === "api") {
     return "api";
@@ -1160,7 +1303,19 @@ function getActiveSource() {
     return "github";
   }
 
-  return hasLocalDataFiles() ? "github" : "api";
+  if (POKEMON_DATA_SOURCE === "snapshot") {
+    return "snapshot";
+  }
+
+  if (hasLocalDataFiles()) {
+    return "github";
+  }
+
+  if (hasSnapshotDataFiles()) {
+    return "snapshot";
+  }
+
+  return "api";
 }
 
 async function ensureLocalDataLoaded() {
@@ -2189,15 +2344,49 @@ function buildGachaPreviewData(set, setCards) {
 }
 
 async function getSetsFromApi() {
-  const response = await tcgClient.get("/sets", {
-    params: {
-      orderBy: "-releaseDate",
-      pageSize: 250,
-      select: "id,name,series,releaseDate,images"
-    }
-  });
+  try {
+    const response = await tcgClient.get("/sets", {
+      params: {
+        orderBy: "-releaseDate",
+        pageSize: 250,
+        select: "id,name,series,releaseDate,images"
+      }
+    });
 
-  return response.data.data;
+    return response.data.data;
+  } catch (error) {
+    if (!hasSnapshotDataFiles()) {
+      throw error;
+    }
+
+    await ensureSnapshotDataLoaded();
+    return snapshotDataCache.sets;
+  }
+}
+
+function getCardsFromSnapshot({ search, setId, sort, page, pageSize }) {
+  const normalizedSearch = normalizeText(search);
+  let cards = snapshotDataCache.cards.filter(
+    (card) => normalizeText(card.supertype) === "pokemon"
+  );
+
+  if (normalizedSearch) {
+    cards = cards.filter((card) => normalizeText(card.name).includes(normalizedSearch));
+  }
+
+  if (setId) {
+    cards = cards.filter((card) => sanitizeSetId(card?.set?.id) === setId);
+  }
+
+  const sortedCards = sortLocalCards(cards, sort);
+  const totalCount = sortedCards.length;
+  const startIndex = (page - 1) * pageSize;
+  const pagedCards = sortedCards.slice(startIndex, startIndex + pageSize);
+
+  return {
+    cards: pagedCards,
+    totalCount
+  };
 }
 
 async function getCardsFromApi({ search, setId, sort, page, pageSize }) {
@@ -2212,20 +2401,29 @@ async function getCardsFromApi({ search, setId, sort, page, pageSize }) {
     queryParts.push(`set.id:${setId}`);
   }
 
-  const response = await tcgClient.get("/cards", {
-    params: {
-      q: queryParts.join(" "),
-      orderBy: API_SORT_MAP[sort],
-      page,
-      pageSize,
-      select: "id,name,images,hp,types,rarity,set,number,supertype,subtypes,tcgplayer,cardmarket"
-    }
-  });
+  try {
+    const response = await tcgClient.get("/cards", {
+      params: {
+        q: queryParts.join(" "),
+        orderBy: API_SORT_MAP[sort],
+        page,
+        pageSize,
+        select: "id,name,images,hp,types,rarity,set,number,supertype,subtypes,tcgplayer,cardmarket"
+      }
+    });
 
-  return {
-    cards: response.data.data,
-    totalCount: response.data.totalCount
-  };
+    return {
+      cards: response.data.data,
+      totalCount: response.data.totalCount
+    };
+  } catch (error) {
+    if (!hasSnapshotDataFiles()) {
+      throw error;
+    }
+
+    await ensureSnapshotDataLoaded();
+    return getCardsFromSnapshot({ search, setId, sort, page, pageSize });
+  }
 }
 
 async function getCardsFromLocal({ search, setId, sort, page, pageSize }) {
@@ -2264,8 +2462,17 @@ async function getSetByIdLocal(setId) {
 }
 
 async function getSetByIdApi(setId) {
-  const response = await tcgClient.get(`/sets/${setId}`);
-  return response.data.data;
+  try {
+    const response = await tcgClient.get(`/sets/${setId}`);
+    return response.data.data;
+  } catch (error) {
+    if (!hasSnapshotDataFiles()) {
+      throw error;
+    }
+
+    await ensureSnapshotDataLoaded();
+    return snapshotDataCache.sets.find((set) => sanitizeSetId(set?.id) === setId) || null;
+  }
 }
 
 async function getSetCardsLocal(setId) {
@@ -2277,35 +2484,45 @@ async function getSetCardsLocal(setId) {
 }
 
 async function getSetCardsApi(setId) {
-  const cards = [];
-  let page = 1;
-  const pageSize = 250;
-  let fetched = 0;
-  let totalCount = Infinity;
+  try {
+    const cards = [];
+    let page = 1;
+    const pageSize = 250;
+    let fetched = 0;
+    let totalCount = Infinity;
 
-  while (fetched < totalCount) {
-    const response = await tcgClient.get("/cards", {
-      params: {
-        q: `set.id:${setId}`,
-        page,
-        pageSize,
-        select: "id,name,images,hp,types,rarity,set,number,supertype,subtypes,tcgplayer,cardmarket"
+    while (fetched < totalCount) {
+      const response = await tcgClient.get("/cards", {
+        params: {
+          q: `set.id:${setId}`,
+          page,
+          pageSize,
+          select: "id,name,images,hp,types,rarity,set,number,supertype,subtypes,tcgplayer,cardmarket"
+        }
+      });
+
+      const currentCards = response.data.data || [];
+      totalCount = response.data.totalCount || currentCards.length;
+      cards.push(...currentCards.map((card) => normalizeCardForClient(card)));
+
+      fetched += currentCards.length;
+      if (!currentCards.length) {
+        break;
       }
-    });
 
-    const currentCards = response.data.data || [];
-    totalCount = response.data.totalCount || currentCards.length;
-    cards.push(...currentCards.map((card) => normalizeCardForClient(card)));
-
-    fetched += currentCards.length;
-    if (!currentCards.length) {
-      break;
+      page += 1;
     }
 
-    page += 1;
-  }
+    return cards;
+  } catch (error) {
+    if (!hasSnapshotDataFiles()) {
+      throw error;
+    }
 
-  return cards;
+    await ensureSnapshotDataLoaded();
+    const cards = snapshotDataCache.cardsBySetId.get(setId) || [];
+    return cards.map((card) => normalizeCardForClient(card));
+  }
 }
 
 async function getCardByIdForInventory(cardId, source) {
