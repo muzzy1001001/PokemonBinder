@@ -19,7 +19,7 @@ const POKEMON_TCG_BASE_URL =
 const POKEMON_TCG_API_KEY =
   process.env.POKEMON_TCG_API_KEY || "a535263b-d4af-4f90-a608-62867abc3ebe";
 const POKEMON_DATA_SOURCE =
-  (process.env.POKEMON_DATA_SOURCE || "github").toLowerCase();
+  (process.env.POKEMON_DATA_SOURCE || "auto").toLowerCase();
 const POKEMON_GITHUB_DATA_DIR =
   process.env.POKEMON_GITHUB_DATA_DIR ||
   path.join(__dirname, "data", "pokemon-tcg-data");
@@ -30,7 +30,7 @@ const LOCAL_CARD_THUMB_IMAGE_DIR = path.join(LOCAL_CARD_IMAGE_DIR, "thumb");
 const LOCAL_SET_LOGO_BASE_PATH = "/assets/sets/logos";
 const LOCAL_SET_SYMBOL_BASE_PATH = "/assets/sets/symbols";
 const LOCAL_PACK_ART_BASE_PATH = "/assets/packs";
-const LOCAL_PACK_ART_DIR = path.join(__dirname, "data", "packs");
+const LOCAL_PACK_ART_DIR = path.join(__dirname, "public", "assets", "packs");
 const PACK_ART_EXTENSIONS = new Set([".avif", ".webp", ".png", ".jpg", ".jpeg"]);
 const CARD_THUMB_WIDTH = Math.max(Number.parseInt(process.env.CARD_THUMB_WIDTH || "220", 10) || 220, 120);
 const CARD_THUMB_QUALITY = Math.min(
