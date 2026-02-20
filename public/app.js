@@ -16,6 +16,9 @@ const POKEDEX_SORT_OPTIONS = [
   "set_newest",
   "set_oldest"
 ];
+const POKEDEX_OWNERSHIP_FILTER_OPTIONS = ["all", "owned", "missing"];
+const MAX_SHOWCASE_BADGES = 8;
+const MAX_FRIENDS = 60;
 const CONDITION_OPTIONS = [
   "Mint",
   "Near Mint",
@@ -36,7 +39,10 @@ const state = {
     ign: "",
     avatar: "",
     uid: "",
-    favoriteCardIds: []
+    favoriteCardIds: [],
+    wishlistCardIds: [],
+    badgeShowcaseIds: [],
+    friends: []
   },
   collectionGoals: [],
   goalProgressCache: new Map(),
@@ -54,6 +60,8 @@ const state = {
     loaded: false,
     error: "",
     sort: "generation_asc",
+    searchQuery: "",
+    ownershipFilter: "all",
     speciesDexByName: {},
     speciesDexByCompact: {},
     speciesMapLoaded: false,
@@ -112,6 +120,7 @@ const state = {
     reviewVisible: false,
     pullsAddedToBinder: false,
     rarestPullCardId: "",
+    packsOpened: 0,
     godPacksOpened: 0
   }
 };
@@ -135,14 +144,24 @@ const el = {
   trainerIgnDisplay: document.getElementById("trainerIgnDisplay"),
   trainerIgnEditBtn: document.getElementById("trainerIgnEditBtn"),
   trainerUid: document.getElementById("trainerUid"),
+  trainerFriendCount: document.getElementById("trainerFriendCount"),
+  friendTrainerIdInput: document.getElementById("friendTrainerIdInput"),
+  friendIgnInput: document.getElementById("friendIgnInput"),
+  addFriendBtn: document.getElementById("addFriendBtn"),
+  trainerFriendList: document.getElementById("trainerFriendList"),
   dashboardFavoriteMeta: document.getElementById("dashboardFavoriteMeta"),
   dashboardFavoriteCards: document.getElementById("dashboardFavoriteCards"),
   dashboardCardsOwned: document.getElementById("dashboardCardsOwned"),
   dashboardUniqueOwned: document.getElementById("dashboardUniqueOwned"),
   dashboardNetWorth: document.getElementById("dashboardNetWorth"),
+  dashboardNetWorthValue: document.getElementById("dashboardNetWorthValue"),
+  dashboardPacksOpened: document.getElementById("dashboardPacksOpened"),
   dashboardGodPacks: document.getElementById("dashboardGodPacks"),
   dashboardTopMeta: document.getElementById("dashboardTopMeta"),
   dashboardTopCards: document.getElementById("dashboardTopCards"),
+  dashboardBadgeMeta: document.getElementById("dashboardBadgeMeta"),
+  dashboardBadgeGrid: document.getElementById("dashboardBadgeGrid"),
+  dashboardBadgeCustomizeBtn: document.getElementById("dashboardBadgeCustomizeBtn"),
   binderPicker: document.getElementById("binderPicker"),
   addBinderBtn: document.getElementById("addBinderBtn"),
   renameBinderBtn: document.getElementById("renameBinderBtn"),
@@ -162,13 +181,18 @@ const el = {
   goalGrid: document.getElementById("goalGrid"),
   pokedexLayout: document.getElementById("pokedexLayout"),
   pokedexMeta: document.getElementById("pokedexMeta"),
+  pokedexSearch: document.getElementById("pokedexSearch"),
   pokedexSort: document.getElementById("pokedexSort"),
+  pokedexOwnershipFilter: document.getElementById("pokedexOwnershipFilter"),
   pokedexGrid: document.getElementById("pokedexGrid"),
   pokedexGalleryPanel: document.getElementById("pokedexGalleryPanel"),
   pokedexGalleryTitle: document.getElementById("pokedexGalleryTitle"),
   pokedexGalleryMeta: document.getElementById("pokedexGalleryMeta"),
   pokedexGalleryGrid: document.getElementById("pokedexGalleryGrid"),
   pokedexGalleryCloseBtn: document.getElementById("pokedexGalleryCloseBtn"),
+  achievementsMeta: document.getElementById("achievementsMeta"),
+  achievementBadgeGrid: document.getElementById("achievementBadgeGrid"),
+  achievementSpecialGrid: document.getElementById("achievementSpecialGrid"),
   gachaPopout: document.getElementById("gachaPopout"),
   gachaPopoutPanel: document.getElementById("gachaPopoutPanel"),
   gachaPopoutInfo: document.getElementById("gachaPopoutInfo"),
@@ -219,12 +243,6 @@ const tiltState = {
   dragDistance: 0,
   deltaX: 0,
   deltaY: 0
-};
-
-const priceLookupState = {
-  byId: new Map(),
-  pendingIds: new Set(),
-  batchTimer: null
 };
 
 function toPositiveInt(value, fallback = 1) {
@@ -345,6 +363,84 @@ function normalizeFavoriteCardIds(value) {
   return [...unique].slice(0, 60);
 }
 
+function normalizeWishlistCardIds(value) {
+  return normalizeFavoriteCardIds(value);
+}
+
+function normalizeBadgeShowcaseIds(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const unique = new Set();
+  for (const item of value) {
+    const badgeId = String(item || "").trim();
+    if (!badgeId) {
+      continue;
+    }
+    unique.add(badgeId);
+  }
+
+  return [...unique].slice(0, MAX_SHOWCASE_BADGES);
+}
+
+function normalizeTrainerCode(value) {
+  const raw = String(value || "")
+    .trim()
+    .toUpperCase();
+
+  if (!raw) {
+    return "";
+  }
+
+  const compact = raw.replace(/[^A-Z0-9]/g, "");
+  if (/^PK\d{8}$/.test(compact)) {
+    return `PK-${compact.slice(2, 6)}-${compact.slice(6, 10)}`;
+  }
+
+  if (/^\d{8}$/.test(compact)) {
+    return `PK-${compact.slice(0, 4)}-${compact.slice(4, 8)}`;
+  }
+
+  return raw.replace(/[^A-Z0-9-]/g, "").slice(0, 20);
+}
+
+function normalizeFriends(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const byUid = new Map();
+  for (const raw of value) {
+    const uid = normalizeTrainerCode(raw?.uid || raw?.id || "");
+    if (!uid) {
+      continue;
+    }
+
+    const ign = String(raw?.ign || raw?.name || "").trim().slice(0, 30);
+    const addedAt = Number(raw?.addedAt) || Date.now();
+
+    if (!byUid.has(uid)) {
+      byUid.set(uid, {
+        uid,
+        ign,
+        addedAt
+      });
+      continue;
+    }
+
+    const existing = byUid.get(uid);
+    if (!existing.ign && ign) {
+      existing.ign = ign;
+    }
+    existing.addedAt = Math.min(existing.addedAt, addedAt);
+  }
+
+  return [...byUid.values()]
+    .sort((left, right) => (right.addedAt || 0) - (left.addedAt || 0))
+    .slice(0, MAX_FRIENDS);
+}
+
 function generateCollectionGoalId() {
   return `goal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -403,6 +499,138 @@ function toggleFavoriteCard(card) {
   renderDashboard();
 }
 
+function isWishlistCard(cardId) {
+  return state.profile.wishlistCardIds.includes(String(cardId || ""));
+}
+
+function toggleWishlistCard(card) {
+  const cardId = String(card?.id || "").trim();
+  if (!cardId) {
+    return;
+  }
+
+  if (isWishlistCard(cardId)) {
+    state.profile.wishlistCardIds = state.profile.wishlistCardIds.filter((id) => id !== cardId);
+  } else {
+    state.profile.wishlistCardIds = [cardId, ...state.profile.wishlistCardIds].slice(0, 60);
+  }
+
+  saveBinder();
+  renderCards();
+}
+
+function removeFriend(uid) {
+  const normalizedUid = normalizeTrainerCode(uid);
+  if (!normalizedUid) {
+    return;
+  }
+
+  state.profile.friends = state.profile.friends.filter((friend) => friend.uid !== normalizedUid);
+  saveBinder();
+  renderDashboard();
+}
+
+function addFriendFromInputs() {
+  if (!el.friendTrainerIdInput) {
+    return;
+  }
+
+  const uid = normalizeTrainerCode(el.friendTrainerIdInput.value);
+  const ign = String(el.friendIgnInput?.value || "").trim().slice(0, 30);
+
+  if (!uid) {
+    window.alert("Please enter a friend Trainer ID.");
+    return;
+  }
+
+  if (uid === normalizeTrainerCode(state.profile.uid)) {
+    window.alert("You already are this Trainer ID.");
+    return;
+  }
+
+  const existing = state.profile.friends.find((friend) => friend.uid === uid);
+  if (existing) {
+    if (ign) {
+      existing.ign = ign;
+    }
+  } else {
+    state.profile.friends = normalizeFriends([
+      {
+        uid,
+        ign,
+        addedAt: Date.now()
+      },
+      ...state.profile.friends
+    ]);
+  }
+
+  if (el.friendTrainerIdInput) {
+    el.friendTrainerIdInput.value = "";
+  }
+  if (el.friendIgnInput) {
+    el.friendIgnInput.value = "";
+  }
+
+  saveBinder();
+  renderDashboard();
+}
+
+function renderTrainerFriends() {
+  if (!el.trainerFriendList || !el.trainerFriendCount) {
+    return;
+  }
+
+  const friends = normalizeFriends(state.profile.friends).filter(
+    (friend) => friend.uid !== normalizeTrainerCode(state.profile.uid)
+  );
+  state.profile.friends = friends;
+
+  el.trainerFriendCount.textContent = `${friends.length} added`;
+  el.trainerFriendList.innerHTML = "";
+
+  if (!friends.length) {
+    const empty = document.createElement("p");
+    empty.className = "trainer-friend-empty";
+    empty.textContent = "No friends yet. Add Trainer IDs to start your friends list.";
+    el.trainerFriendList.appendChild(empty);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  for (const friend of friends) {
+    const item = document.createElement("article");
+    item.className = "trainer-friend-item";
+
+    const meta = document.createElement("div");
+    meta.className = "trainer-friend-meta";
+
+    const ign = document.createElement("p");
+    ign.className = "trainer-friend-ign";
+    ign.textContent = friend.ign || "Unknown Trainer";
+    meta.appendChild(ign);
+
+    const uid = document.createElement("p");
+    uid.className = "trainer-friend-id";
+    uid.textContent = friend.uid;
+    meta.appendChild(uid);
+
+    item.appendChild(meta);
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "trainer-friend-remove";
+    removeBtn.textContent = "Remove";
+    removeBtn.addEventListener("click", () => {
+      removeFriend(friend.uid);
+    });
+    item.appendChild(removeBtn);
+
+    fragment.appendChild(item);
+  }
+
+  el.trainerFriendList.appendChild(fragment);
+}
+
 function getActiveBinderRecord() {
   return state.binders.find((binder) => binder.id === state.activeBinderId) || null;
 }
@@ -436,9 +664,13 @@ function loadBinderState() {
       state.profile.avatar = String(parsed?.profile?.avatar || "");
       state.profile.uid = String(parsed?.profile?.uid || "").slice(0, 20) || generateTrainerUid();
       state.profile.favoriteCardIds = normalizeFavoriteCardIds(parsed?.profile?.favoriteCardIds);
+      state.profile.wishlistCardIds = normalizeWishlistCardIds(parsed?.profile?.wishlistCardIds);
+      state.profile.badgeShowcaseIds = normalizeBadgeShowcaseIds(parsed?.profile?.badgeShowcaseIds);
+      state.profile.friends = normalizeFriends(parsed?.profile?.friends);
       state.collectionGoals = Array.isArray(parsed?.collectionGoals)
         ? parsed.collectionGoals.map((goal) => normalizeCollectionGoal(goal))
         : [];
+      state.gacha.packsOpened = Math.max(toPositiveInt(parsed?.packsOpened, 0), 0);
       state.gacha.godPacksOpened = Math.max(toPositiveInt(parsed?.godPacksOpened, 0), 0);
       if (COLLECTION_PRESET_OPTIONS.includes(parsed?.binderCollection?.preset)) {
         state.binderCollection.preset = parsed.binderCollection.preset;
@@ -446,6 +678,10 @@ function loadBinderState() {
       state.binderCollection.setId = String(parsed?.binderCollection?.setId || "");
       if (POKEDEX_SORT_OPTIONS.includes(parsed?.pokedex?.sort)) {
         state.pokedex.sort = parsed.pokedex.sort;
+      }
+      state.pokedex.searchQuery = String(parsed?.pokedex?.searchQuery || "").slice(0, 50);
+      if (POKEDEX_OWNERSHIP_FILTER_OPTIONS.includes(parsed?.pokedex?.ownershipFilter)) {
+        state.pokedex.ownershipFilter = parsed.pokedex.ownershipFilter;
       }
       if (parsed?.pokedex?.previewCardBySpecies && typeof parsed.pokedex.previewCardBySpecies === "object") {
         state.pokedex.previewCardBySpecies = Object.fromEntries(
@@ -469,12 +705,18 @@ function loadBinderState() {
     state.binders = [createDefaultBinderRecord(DEFAULT_BINDER_NAME, legacyEntries)];
     state.profile.uid = generateTrainerUid();
     state.profile.favoriteCardIds = [];
+    state.profile.wishlistCardIds = [];
+    state.profile.badgeShowcaseIds = [];
+    state.profile.friends = [];
     state.collectionGoals = [];
     setActiveBinder(state.binders[0].id);
   } catch {
     state.binders = [createDefaultBinderRecord()];
     state.profile.uid = generateTrainerUid();
     state.profile.favoriteCardIds = [];
+    state.profile.wishlistCardIds = [];
+    state.profile.badgeShowcaseIds = [];
+    state.profile.friends = [];
     state.collectionGoals = [];
     setActiveBinder(state.binders[0].id);
   }
@@ -494,7 +736,10 @@ function saveBinder() {
       ign: state.profile.ign,
       avatar: state.profile.avatar,
       uid: state.profile.uid,
-      favoriteCardIds: state.profile.favoriteCardIds
+      favoriteCardIds: state.profile.favoriteCardIds,
+      wishlistCardIds: state.profile.wishlistCardIds,
+      badgeShowcaseIds: state.profile.badgeShowcaseIds,
+      friends: state.profile.friends
     },
     collectionGoals: state.collectionGoals,
     binderCollection: {
@@ -503,8 +748,11 @@ function saveBinder() {
     },
     pokedex: {
       sort: state.pokedex.sort,
+      searchQuery: state.pokedex.searchQuery,
+      ownershipFilter: state.pokedex.ownershipFilter,
       previewCardBySpecies: state.pokedex.previewCardBySpecies
     },
+    packsOpened: state.gacha.packsOpened,
     godPacksOpened: state.gacha.godPacksOpened
   };
 
@@ -592,6 +840,11 @@ function setActiveView(viewId, title, subtitle, activeLink = null) {
   if (viewId === "pokedex") {
     void ensurePokedexLoaded();
     renderPokedex();
+  }
+
+  if (viewId === "achievements") {
+    void ensurePokedexLoaded();
+    renderAchievements();
   }
 }
 
@@ -766,110 +1019,134 @@ function toFiniteNumber(value) {
   return parsed;
 }
 
+function rarityValueTier(card) {
+  const rarity = String(card?.rarity || "").toLowerCase();
+
+  if (
+    rarity.includes("secret") ||
+    rarity.includes("hyper") ||
+    rarity.includes("gold") ||
+    rarity.includes("rainbow") ||
+    rarity.includes("special illustration")
+  ) {
+    return "chase";
+  }
+
+  if (
+    rarity.includes("illustration") ||
+    rarity.includes("ultra") ||
+    rarity.includes("rare holo v") ||
+    rarity.includes("double rare")
+  ) {
+    return "ultra";
+  }
+
+  if (rarity.includes("holo") || rarity.includes("rare")) {
+    return "rare";
+  }
+
+  if (rarity.includes("uncommon")) {
+    return "uncommon";
+  }
+
+  return "common";
+}
+
+function stableCardVariance(cardId) {
+  const text = String(cardId || "");
+  if (!text) {
+    return 1;
+  }
+
+  let hash = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = (hash * 31 + text.charCodeAt(index)) % 100000;
+  }
+
+  return 0.86 + ((hash % 31) / 100);
+}
+
+function parseCollectorNumber(card) {
+  const text = String(card?.number || "").trim();
+  const slash = text.match(/(\d+)\s*\/\s*(\d+)/);
+  if (slash) {
+    return {
+      number: Number.parseInt(slash[1], 10) || 0,
+      total: Number.parseInt(slash[2], 10) || 0
+    };
+  }
+
+  const plain = text.match(/(\d+)/);
+  return {
+    number: plain ? Number.parseInt(plain[1], 10) || 0 : 0,
+    total: Number.parseInt(card?.set?.printedTotal || card?.set?.total || 0, 10) || 0
+  };
+}
+
 function getCardMarketBaseValue(card) {
-  const cardId = card?.id;
-  const cardmarket = card?.cardmarket?.prices || {};
-  const tcgPrices = card?.tcgplayer?.prices || {};
-  const tcgCandidates = [];
+  const tier = rarityValueTier(card);
+  const baseByTier = {
+    common: 24,
+    uncommon: 52,
+    rare: 150,
+    ultra: 520,
+    chase: 1450
+  };
 
-  for (const priceObj of Object.values(tcgPrices)) {
-    if (!priceObj || typeof priceObj !== "object") {
-      continue;
-    }
-    tcgCandidates.push(
-      toFiniteNumber(priceObj.market),
-      toFiniteNumber(priceObj.mid),
-      toFiniteNumber(priceObj.low)
-    );
+  let value = baseByTier[tier] || 100;
+
+  const subtypes = Array.isArray(card?.subtypes)
+    ? card.subtypes.map((item) => String(item || "").toLowerCase())
+    : [];
+  const name = String(card?.name || "").toLowerCase();
+  const rarity = String(card?.rarity || "").toLowerCase();
+  const setName = String(card?.set?.name || "").toLowerCase();
+
+  if (subtypes.includes("vstar")) {
+    value += 120;
+  }
+  if (subtypes.includes("vmax")) {
+    value += 150;
+  }
+  if (subtypes.includes("gx")) {
+    value += 96;
+  }
+  if (subtypes.includes("ex")) {
+    value += 85;
+  }
+  if (subtypes.includes("v")) {
+    value += 74;
   }
 
-  const candidates = [
-    toFiniteNumber(cardmarket.trendPrice),
-    toFiniteNumber(cardmarket.averageSellPrice),
-    toFiniteNumber(cardmarket.avg1),
-    toFiniteNumber(cardmarket.avg7),
-    ...tcgCandidates
-  ].filter((value) => value > 0);
-
-  if (candidates.length) {
-    return candidates[0];
+  if (name.includes("charizard")) {
+    value += 330;
+  } else if (name.includes("pikachu") || name.includes("mew") || name.includes("rayquaza")) {
+    value += 190;
+  } else if (name.includes("lugia") || name.includes("giratina") || name.includes("umbreon")) {
+    value += 155;
   }
 
-  if (cardId && priceLookupState.byId.has(cardId)) {
-    return toFiniteNumber(priceLookupState.byId.get(cardId));
+  const collectorInfo = parseCollectorNumber(card);
+  if (collectorInfo.total > 0 && collectorInfo.number > collectorInfo.total) {
+    value += 620;
   }
 
-  return 0;
-}
-
-async function fetchCardPrices(cardIds) {
-  const response = await fetch("/api/card-prices", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ ids: cardIds })
-  });
-
-  if (!response.ok) {
-    throw new Error("Could not fetch card prices");
+  if (rarity.includes("promo")) {
+    value += 62;
   }
 
-  const payload = await response.json();
-  return payload?.prices || {};
-}
-
-function queueCardPriceLookup(cards) {
-  const queue = [];
-  for (const card of cards) {
-    const cardId = card?.id;
-    if (!cardId) {
-      continue;
-    }
-
-    const hasInlineValue = getCardMarketBaseValue({ ...card, id: "" }) > 0;
-    if (hasInlineValue) {
-      continue;
-    }
-
-    if (priceLookupState.byId.has(cardId) || priceLookupState.pendingIds.has(cardId)) {
-      continue;
-    }
-
-    queue.push(cardId);
+  const releaseYear = Number.parseInt(String(card?.set?.releaseDate || "").slice(0, 4), 10);
+  if (Number.isFinite(releaseYear) && releaseYear > 0) {
+    const age = Math.max(new Date().getFullYear() - releaseYear, 0);
+    value += Math.min(age * 14, 150);
   }
 
-  if (!queue.length) {
-    return;
+  if (setName.includes("151") || setName.includes("evolving skies")) {
+    value += 70;
   }
 
-  for (const cardId of queue) {
-    priceLookupState.pendingIds.add(cardId);
-  }
-
-  if (priceLookupState.batchTimer) {
-    return;
-  }
-
-  priceLookupState.batchTimer = window.setTimeout(async () => {
-    priceLookupState.batchTimer = null;
-    const ids = [...priceLookupState.pendingIds].slice(0, 120);
-    ids.forEach((id) => priceLookupState.pendingIds.delete(id));
-
-    try {
-      const prices = await fetchCardPrices(ids);
-      for (const id of ids) {
-        priceLookupState.byId.set(id, toFiniteNumber(prices[id]));
-      }
-    } catch {
-      for (const id of ids) {
-        priceLookupState.byId.set(id, 0);
-      }
-    }
-
-    renderDashboard();
-    renderBinder();
-  }, 90);
+  const finalValue = Math.round(value * stableCardVariance(card?.id));
+  return Math.max(finalValue, 12);
 }
 
 function getCardLastSoldValue(card) {
@@ -879,15 +1156,15 @@ function getCardLastSoldValue(card) {
 
 function formatLastSoldValue(card) {
   const value = getCardLastSoldValue(card);
-  if (value <= 0) {
-    return "Last sold: N/A";
-  }
-
-  return `Last sold: ${formatCurrency(value)}`;
+  return `Value: ${formatPokeCoins(value)}`;
 }
 
-function formatCurrency(value) {
-  return `$${toFiniteNumber(value).toFixed(2)}`;
+function formatPokeCoins(value) {
+  return `${Math.round(toFiniteNumber(value)).toLocaleString()} POKECOINS`;
+}
+
+function formatPokeCoinCount(value) {
+  return Math.round(toFiniteNumber(value)).toLocaleString();
 }
 
 function formatDate(value) {
@@ -1156,10 +1433,14 @@ async function fetchSets() {
 }
 
 async function fetchCards() {
+  const serverSort = state.query.sort === "wishlist_first"
+    ? "name_asc"
+    : state.query.sort;
+
   const params = new URLSearchParams({
     search: state.query.search,
     setId: state.query.setId,
-    sort: state.query.sort,
+    sort: serverSort,
     page: String(state.page),
     pageSize: String(state.pageSize)
   });
@@ -1689,14 +1970,21 @@ function renderDashboard() {
 
   el.dashboardCardsOwned.textContent = String(totalCopies);
   el.dashboardUniqueOwned.textContent = `${uniqueOwned} unique card${uniqueOwned === 1 ? "" : "s"}`;
-  el.dashboardNetWorth.textContent = formatCurrency(netWorth);
+  if (el.dashboardNetWorthValue) {
+    el.dashboardNetWorthValue.textContent = Math.round(netWorth).toLocaleString();
+  } else {
+    el.dashboardNetWorth.textContent = formatPokeCoins(netWorth);
+  }
+  if (el.dashboardPacksOpened) {
+    el.dashboardPacksOpened.textContent = String(state.gacha.packsOpened);
+  }
   el.dashboardGodPacks.textContent = String(state.gacha.godPacksOpened);
 
   if (el.dashboardTopMeta) {
     const active = getActiveBinderRecord();
     el.dashboardTopMeta.textContent = active
-      ? `Highest last sold value cards in ${active.name}.`
-      : "Highest last sold value cards in your active binder.";
+      ? `Highest POKECOIN value cards in ${active.name}.`
+      : "Highest POKECOIN value cards in your active binder.";
   }
 
   if (el.trainerIgnDisplay) {
@@ -1708,8 +1996,10 @@ function renderDashboard() {
   }
 
   renderTrainerAvatar();
+  renderTrainerFriends();
 
   if (!el.dashboardTopCards) {
+    renderDashboardBadgeShowcase();
     return;
   }
 
@@ -1781,7 +2071,6 @@ function renderDashboard() {
   }
 
   el.dashboardTopCards.innerHTML = "";
-  queueCardPriceLookup(state.binder.slice(0, 120));
   const topCards = [...state.binder]
     .sort((left, right) => getCardLastSoldValue(right) - getCardLastSoldValue(left))
     .slice(0, 5);
@@ -1791,6 +2080,7 @@ function renderDashboard() {
     empty.className = "empty-state";
     empty.textContent = "No cards in this binder yet.";
     el.dashboardTopCards.appendChild(empty);
+    renderDashboardBadgeShowcase();
     return;
   }
 
@@ -1800,6 +2090,7 @@ function renderDashboard() {
   }
 
   el.dashboardTopCards.appendChild(fragment);
+  renderDashboardBadgeShowcase();
 
 }
 
@@ -1940,7 +2231,11 @@ function buildPokedexEntries(cards, speciesDexByName) {
 
     const species = lookupSpeciesFromName(card?.name, speciesDexByName);
     const fallbackName = String(card?.name || "").trim();
-    const speciesKey = species?.slug || normalizePokemonKey(fallbackName);
+    const fallbackSlug =
+      buildPokemonSlugCandidates(fallbackName)[0] ||
+      normalizePokemonKey(fallbackName).replace(/\s+/g, "-");
+    const speciesSlug = species?.slug || fallbackSlug;
+    const speciesKey = species?.dexNumber ? `dex-${species.dexNumber}` : speciesSlug;
 
     if (!speciesKey) {
       continue;
@@ -1954,10 +2249,12 @@ function buildPokedexEntries(cards, speciesDexByName) {
       uniqueBySpecies.set(speciesKey, {
         id: card.id,
         speciesKey,
+        speciesSlug,
         name: species?.displayName || fallbackName,
         images: card.images,
         rarity: card.rarity,
         rarityScoreValue: cardRarityScore,
+        typeHints: Array.isArray(card.types) ? [...card.types] : [],
         set: card.set,
         number: card.number,
         supertype: card.supertype,
@@ -1980,6 +2277,22 @@ function buildPokedexEntries(cards, speciesDexByName) {
         existing.number = card.number || existing.number;
         existing.id = card.id || existing.id;
       }
+
+      if (!existing.speciesSlug && speciesSlug) {
+        existing.speciesSlug = speciesSlug;
+      }
+
+      if (Array.isArray(card.types)) {
+        const seenTypes = new Set((existing.typeHints || []).map((item) => String(item)));
+        for (const type of card.types) {
+          const normalizedType = String(type || "").trim();
+          if (normalizedType && !seenTypes.has(normalizedType)) {
+            seenTypes.add(normalizedType);
+            existing.typeHints = existing.typeHints || [];
+            existing.typeHints.push(normalizedType);
+          }
+        }
+      }
     }
 
     if (!galleryBySpecies[speciesKey]) {
@@ -1992,6 +2305,7 @@ function buildPokedexEntries(cards, speciesDexByName) {
         id: card.id,
         name: card.name,
         images: card.images,
+        types: Array.isArray(card.types) ? [...card.types] : [],
         rarity: card.rarity,
         set: card.set,
         number: card.number,
@@ -2140,6 +2454,459 @@ function sortPokedexEntries(entries, ownedSpecies) {
   return list;
 }
 
+function pokemonDbPixelBadgeUrl(speciesKey) {
+  const slug = String(speciesKey || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "");
+
+  if (!slug) {
+    return "";
+  }
+
+  return `https://img.pokemondb.net/sprites/black-white/anim/normal/${slug}.gif`;
+}
+
+function pokemonSpriteFallbackUrl(dexNumber) {
+  const dex = Number.parseInt(dexNumber, 10);
+  if (Number.isFinite(dex) && dex > 0) {
+    return `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${dex}.png`;
+  }
+
+  return `data:image/svg+xml;utf8,${encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="10" fill="#e7edf7"/><circle cx="32" cy="32" r="18" fill="#c7d4ea"/><circle cx="32" cy="32" r="8" fill="#9cb1d1"/></svg>'
+  )}`;
+}
+
+function bindAchievementSpriteFallback(imageElement, badge) {
+  const fallbackUrl = pokemonSpriteFallbackUrl(badge?.dexNumber || 0);
+  let attemptedFallback = false;
+
+  imageElement.addEventListener("error", () => {
+    if (!attemptedFallback) {
+      attemptedFallback = true;
+      if (fallbackUrl) {
+        imageElement.src = fallbackUrl;
+        return;
+      }
+    }
+
+    imageElement.src = "";
+  });
+}
+
+function getAchievementData() {
+  if (!state.pokedex.loaded || !state.pokedex.entries.length) {
+    return null;
+  }
+
+  const ownedCardIds = new Set(state.binder.map((item) => item.id));
+  const allCardsById = new Map();
+  const rawSpeciesBadges = [];
+
+  for (const entry of state.pokedex.entries) {
+    const gallery = state.pokedex.galleryBySpecies[entry.speciesKey] || [];
+    if (!gallery.length) {
+      continue;
+    }
+
+    let ownedCount = 0;
+    let hasWaterType = false;
+
+    for (const card of gallery) {
+      if (card?.id && !allCardsById.has(card.id)) {
+        allCardsById.set(card.id, card);
+      }
+
+      if (ownedCardIds.has(card.id)) {
+        ownedCount += 1;
+      }
+
+      const types = Array.isArray(card?.types) ? card.types : [];
+      if (types.some((type) => String(type || "").toLowerCase() === "water")) {
+        hasWaterType = true;
+      }
+    }
+
+    const unlocked = ownedCount === gallery.length;
+
+    rawSpeciesBadges.push({
+      id: `species:${entry.speciesKey}`,
+      kind: "species",
+      speciesKey: entry.speciesKey,
+      title: entry.name,
+      unlocked,
+      ownedCount,
+      totalCount: gallery.length,
+      spriteUrl: pokemonDbPixelBadgeUrl(entry.speciesSlug || entry.speciesKey),
+      hasWaterType,
+      dexNumber: entry.dexNumber || 9999
+    });
+  }
+
+  const speciesByKey = new Map();
+  for (const badge of rawSpeciesBadges) {
+    const dedupeKey =
+      badge.dexNumber && badge.dexNumber !== 9999
+        ? `dex:${badge.dexNumber}`
+        : `name:${normalizePokemonKey(badge.title)}`;
+
+    if (!speciesByKey.has(dedupeKey)) {
+      speciesByKey.set(dedupeKey, { ...badge });
+      continue;
+    }
+
+    const existing = speciesByKey.get(dedupeKey);
+    existing.ownedCount += badge.ownedCount;
+    existing.totalCount += badge.totalCount;
+    existing.unlocked = existing.totalCount > 0 && existing.ownedCount >= existing.totalCount;
+    existing.hasWaterType = existing.hasWaterType || badge.hasWaterType;
+
+    if ((!existing.spriteUrl || existing.spriteUrl === "") && badge.spriteUrl) {
+      existing.spriteUrl = badge.spriteUrl;
+      existing.speciesKey = badge.speciesKey;
+      existing.id = badge.id;
+    }
+  }
+
+  const speciesBadges = [...speciesByKey.values()];
+  const waterSpeciesTotal = speciesBadges.filter((badge) => badge.hasWaterType).length;
+  const waterSpeciesCompleted = speciesBadges.filter(
+    (badge) => badge.hasWaterType && badge.unlocked
+  ).length;
+
+  speciesBadges.sort((left, right) => {
+    const byDex = (left.dexNumber || 9999) - (right.dexNumber || 9999);
+    if (byDex) {
+      return byDex;
+    }
+
+    return String(left.title || "").localeCompare(String(right.title || ""));
+  });
+
+  const allCards = [...allCardsById.values()];
+  const allCardsCount = allCards.length;
+  const allCardsOwnedCount = allCards.filter((card) => ownedCardIds.has(card.id)).length;
+
+  const surgingSet = state.sets.find((set) =>
+    String(set?.name || "").toLowerCase().includes("surging sparks")
+  );
+  const surgingCards = allCards.filter((card) => {
+    const setId = String(card?.set?.id || "").toLowerCase();
+    const setName = String(card?.set?.name || "").toLowerCase();
+    if (surgingSet?.id && setId === String(surgingSet.id).toLowerCase()) {
+      return true;
+    }
+
+    return setName.includes("surging sparks");
+  });
+  const surgingOwnedCount = surgingCards.filter((card) => ownedCardIds.has(card.id)).length;
+
+  const specialAchievements = [
+    {
+      id: "special:all-water-species",
+      kind: "special",
+      title: "Tidal Curator",
+      description: `Complete all Water-type species (${waterSpeciesCompleted}/${waterSpeciesTotal})`,
+      unlocked: waterSpeciesTotal > 0 && waterSpeciesCompleted === waterSpeciesTotal,
+      secret: true,
+      spriteUrl: pokemonDbPixelBadgeUrl("squirtle"),
+      dexNumber: 7
+    },
+    {
+      id: "special:surging-sparks-master",
+      kind: "special",
+      title: "Storm Vault",
+      description: `Complete Surging Sparks set (${surgingOwnedCount}/${surgingCards.length})`,
+      unlocked: surgingCards.length > 0 && surgingOwnedCount === surgingCards.length,
+      secret: true,
+      spriteUrl: pokemonDbPixelBadgeUrl("pikachu"),
+      dexNumber: 25
+    },
+    {
+      id: "special:all-pokemon-cards",
+      kind: "special",
+      title: "Pokecards Absolute",
+      description: `Obtain all Pokemon cards (${allCardsOwnedCount}/${allCardsCount})`,
+      unlocked: allCardsCount > 0 && allCardsOwnedCount === allCardsCount,
+      secret: false,
+      spriteUrl: pokemonDbPixelBadgeUrl("mew"),
+      dexNumber: 151
+    }
+  ];
+
+  const allAchievements = [...speciesBadges, ...specialAchievements];
+
+  return {
+    totalSpecies: speciesBadges.length,
+    unlockedSpeciesCount: speciesBadges.filter((badge) => badge.unlocked).length,
+    unlockedSpecialCount: specialAchievements.filter((badge) => badge.unlocked).length,
+    speciesBadges,
+    specialAchievements,
+    allAchievements
+  };
+}
+
+function toggleBadgeShowcase(badgeId, achievementData = null) {
+  const normalizedId = String(badgeId || "").trim();
+  if (!normalizedId) {
+    return;
+  }
+
+  const data = achievementData || getAchievementData();
+  const unlockedById = new Map(
+    (data?.allAchievements || [])
+      .filter((achievement) => achievement.unlocked)
+      .map((achievement) => [achievement.id, achievement])
+  );
+
+  if (!unlockedById.has(normalizedId)) {
+    return;
+  }
+
+  const nextIds = normalizeBadgeShowcaseIds(state.profile.badgeShowcaseIds);
+  const existingIndex = nextIds.indexOf(normalizedId);
+  if (existingIndex >= 0) {
+    nextIds.splice(existingIndex, 1);
+  } else {
+    if (nextIds.length >= MAX_SHOWCASE_BADGES) {
+      nextIds.shift();
+    }
+    nextIds.push(normalizedId);
+  }
+
+  state.profile.badgeShowcaseIds = nextIds;
+  saveBinder();
+  renderAchievements();
+  renderDashboardBadgeShowcase();
+}
+
+function renderDashboardBadgeShowcase() {
+  if (!el.dashboardBadgeMeta || !el.dashboardBadgeGrid) {
+    return;
+  }
+
+  el.dashboardBadgeGrid.innerHTML = "";
+
+  if (!state.pokedex.loaded || !state.pokedex.entries.length) {
+    el.dashboardBadgeMeta.textContent = "Open Achievements to load and pin badges.";
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No badge showcase yet.";
+    el.dashboardBadgeGrid.appendChild(empty);
+    return;
+  }
+
+  const data = getAchievementData();
+  if (!data) {
+    el.dashboardBadgeMeta.textContent = "No achievements available yet.";
+    return;
+  }
+
+  const unlockedById = new Map(
+    data.allAchievements
+      .filter((achievement) => achievement.unlocked)
+      .map((achievement) => [achievement.id, achievement])
+  );
+
+  const pinnedIds = normalizeBadgeShowcaseIds(state.profile.badgeShowcaseIds).filter((id) =>
+    unlockedById.has(id)
+  );
+
+  if (pinnedIds.join("|") !== state.profile.badgeShowcaseIds.join("|")) {
+    state.profile.badgeShowcaseIds = pinnedIds;
+    saveBinder();
+  }
+
+  el.dashboardBadgeMeta.textContent = `${pinnedIds.length}/${MAX_SHOWCASE_BADGES} badges pinned`;
+
+  if (!pinnedIds.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No badges pinned yet. Use Customize to pick your dashboard badges.";
+    el.dashboardBadgeGrid.appendChild(empty);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  for (const badgeId of pinnedIds) {
+    const badge = unlockedById.get(badgeId);
+    if (!badge) {
+      continue;
+    }
+
+    const item = document.createElement("article");
+    item.className = "dashboard-badge-item";
+
+    const sprite = document.createElement("img");
+    sprite.className = "dashboard-badge-sprite";
+    sprite.loading = "lazy";
+    sprite.src = badge.spriteUrl || "";
+    sprite.alt = `${badge.title} badge`;
+    sprite.referrerPolicy = "no-referrer";
+    bindAchievementSpriteFallback(sprite, badge);
+    item.appendChild(sprite);
+
+    const title = document.createElement("p");
+    title.textContent = badge.title;
+    item.appendChild(title);
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "dashboard-badge-remove";
+    removeBtn.textContent = "Remove";
+    removeBtn.addEventListener("click", () => {
+      toggleBadgeShowcase(badge.id, data);
+    });
+    item.appendChild(removeBtn);
+
+    fragment.appendChild(item);
+  }
+
+  el.dashboardBadgeGrid.appendChild(fragment);
+}
+
+function renderAchievements() {
+  if (!el.achievementsMeta || !el.achievementBadgeGrid || !el.achievementSpecialGrid) {
+    return;
+  }
+
+  el.achievementBadgeGrid.innerHTML = "";
+  el.achievementSpecialGrid.innerHTML = "";
+
+  if (state.pokedex.loading && !state.pokedex.loaded) {
+    el.achievementsMeta.textContent = "Loading achievements from your Pokecards progress...";
+    const loading = document.createElement("div");
+    loading.className = "empty-state";
+    loading.textContent = "Loading achievements...";
+    el.achievementBadgeGrid.appendChild(loading);
+    return;
+  }
+
+  if (state.pokedex.error) {
+    el.achievementsMeta.textContent = "Achievements unavailable.";
+    const error = document.createElement("div");
+    error.className = "empty-state";
+    error.textContent = state.pokedex.error;
+    el.achievementBadgeGrid.appendChild(error);
+    return;
+  }
+
+  const data = getAchievementData();
+  if (!data) {
+    el.achievementsMeta.textContent = "Load your Pokecards to unlock achievements.";
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No achievement data yet.";
+    el.achievementBadgeGrid.appendChild(empty);
+    return;
+  }
+
+  const pinnedSet = new Set(state.profile.badgeShowcaseIds);
+  el.achievementsMeta.textContent =
+    `${data.unlockedSpeciesCount}/${data.totalSpecies} species unlocked • ` +
+    `${data.unlockedSpecialCount}/3 special unlocked`;
+
+  const badgeFragment = document.createDocumentFragment();
+  for (const badge of data.speciesBadges) {
+    const card = document.createElement("article");
+    card.className = "achievement-badge-card";
+    card.classList.toggle("is-locked", !badge.unlocked);
+    card.classList.toggle("is-pinned", pinnedSet.has(badge.id));
+
+    const sprite = document.createElement("img");
+    sprite.className = "achievement-badge-sprite";
+    sprite.loading = "lazy";
+    sprite.src = badge.spriteUrl;
+    sprite.alt = `${badge.title} pixel badge`;
+    sprite.referrerPolicy = "no-referrer";
+    bindAchievementSpriteFallback(sprite, badge);
+    card.appendChild(sprite);
+
+    const title = document.createElement("h4");
+    title.textContent = badge.title;
+    card.appendChild(title);
+
+    const progress = document.createElement("p");
+    progress.textContent = `${badge.ownedCount}/${badge.totalCount}`;
+    card.appendChild(progress);
+
+    const pinBtn = document.createElement("button");
+    pinBtn.type = "button";
+    pinBtn.className = "achievement-pin-btn";
+    if (!badge.unlocked) {
+      pinBtn.textContent = "Locked";
+      pinBtn.disabled = true;
+    } else {
+      pinBtn.textContent = pinnedSet.has(badge.id) ? "Pinned" : "Pin";
+      pinBtn.classList.toggle("is-active", pinnedSet.has(badge.id));
+      pinBtn.addEventListener("click", () => {
+        toggleBadgeShowcase(badge.id, data);
+      });
+    }
+    card.appendChild(pinBtn);
+
+    badgeFragment.appendChild(card);
+  }
+  el.achievementBadgeGrid.appendChild(badgeFragment);
+
+  const specialFragment = document.createDocumentFragment();
+  for (const achievement of data.specialAchievements) {
+    const item = document.createElement("article");
+    item.className = "achievement-special-card";
+    item.classList.toggle("is-unlocked", achievement.unlocked);
+    item.classList.toggle("is-secret", achievement.secret && !achievement.unlocked);
+    item.classList.toggle("is-pinned", pinnedSet.has(achievement.id));
+
+    if (achievement.secret && !achievement.unlocked) {
+      const mask = document.createElement("div");
+      mask.className = "achievement-secret-mask";
+      mask.textContent = "?";
+      item.appendChild(mask);
+    } else {
+      const sprite = document.createElement("img");
+      sprite.className = "achievement-special-sprite";
+      sprite.loading = "lazy";
+      sprite.src = achievement.spriteUrl;
+      sprite.alt = `${achievement.title} icon`;
+      sprite.referrerPolicy = "no-referrer";
+      bindAchievementSpriteFallback(sprite, achievement);
+      item.appendChild(sprite);
+    }
+
+    const title = document.createElement("h4");
+    title.textContent = achievement.secret && !achievement.unlocked
+      ? "Secret Achievement"
+      : achievement.title;
+    item.appendChild(title);
+
+    const desc = document.createElement("p");
+    desc.textContent = achievement.secret && !achievement.unlocked
+      ? "Keep collecting to reveal this hidden challenge."
+      : achievement.description;
+    item.appendChild(desc);
+
+    const pinBtn = document.createElement("button");
+    pinBtn.type = "button";
+    pinBtn.className = "achievement-pin-btn";
+    if (!achievement.unlocked) {
+      pinBtn.textContent = "Locked";
+      pinBtn.disabled = true;
+    } else {
+      pinBtn.textContent = pinnedSet.has(achievement.id) ? "Pinned" : "Pin";
+      pinBtn.classList.toggle("is-active", pinnedSet.has(achievement.id));
+      pinBtn.addEventListener("click", () => {
+        toggleBadgeShowcase(achievement.id, data);
+      });
+    }
+    item.appendChild(pinBtn);
+
+    specialFragment.appendChild(item);
+  }
+
+  el.achievementSpecialGrid.appendChild(specialFragment);
+}
+
 async function ensurePokedexLoaded() {
   if (state.pokedex.loading || state.pokedex.loaded) {
     return;
@@ -2154,7 +2921,7 @@ async function ensurePokedexLoaded() {
     const cards = await fetchAllCollectionCards({
       sort: "name_asc",
       pageSize: 120,
-      maxPages: 120
+      maxPages: 220
     });
 
     const pokedexData = buildPokedexEntries(cards, state.pokedex.speciesDexByName);
@@ -2162,10 +2929,12 @@ async function ensurePokedexLoaded() {
     state.pokedex.galleryBySpecies = pokedexData.galleryBySpecies;
     state.pokedex.loaded = true;
   } catch (error) {
-    state.pokedex.error = error.message || "Could not load pokedex.";
+    state.pokedex.error = error.message || "Could not load Pokecards.";
   } finally {
     state.pokedex.loading = false;
     renderPokedex();
+    renderAchievements();
+    renderDashboardBadgeShowcase();
   }
 }
 
@@ -2258,6 +3027,24 @@ function renderPokedexGallery() {
     item.classList.toggle("is-unobtained", !owned);
     item.classList.toggle("is-preview", currentPreviewCardId === card.id);
 
+    if (owned) {
+      const wishlistBtn = document.createElement("button");
+      wishlistBtn.type = "button";
+      wishlistBtn.className = "favorite-toggle pokecards-gallery-favorite";
+      wishlistBtn.classList.toggle("is-active", isFavoriteCard(card.id));
+      wishlistBtn.textContent = isFavoriteCard(card.id) ? "★" : "☆";
+      wishlistBtn.setAttribute(
+        "aria-label",
+        isFavoriteCard(card.id)
+          ? `Remove ${card.name} from favorites`
+          : `Add ${card.name} to favorites`
+      );
+      wishlistBtn.addEventListener("click", () => {
+        toggleFavoriteCard(card);
+      });
+      item.appendChild(wishlistBtn);
+    }
+
     const imageButton = document.createElement("button");
     imageButton.type = "button";
     imageButton.className = "pokedex-gallery-image-btn";
@@ -2276,6 +3063,21 @@ function renderPokedexGallery() {
     meta.className = "pokedex-gallery-meta";
     meta.textContent = `${card.set?.name || "Set"} | ${card.rarity || "Unknown"}`;
     item.appendChild(meta);
+
+    const valueLine = document.createElement("p");
+    valueLine.className = "pokedex-gallery-value";
+
+    const coin = document.createElement("img");
+    coin.className = "pokedex-gallery-coin";
+    coin.src = "/pokecoin.gif";
+    coin.alt = "PokeCoin";
+    valueLine.appendChild(coin);
+
+    const value = document.createElement("span");
+    value.textContent = formatPokeCoinCount(getCardLastSoldValue(card));
+    valueLine.appendChild(value);
+
+    item.appendChild(valueLine);
 
     if (owned) {
       const previewBtn = document.createElement("button");
@@ -2308,19 +3110,28 @@ function renderPokedex() {
   if (el.pokedexSort && el.pokedexSort.value !== state.pokedex.sort) {
     el.pokedexSort.value = state.pokedex.sort;
   }
+  if (el.pokedexSearch && el.pokedexSearch.value !== state.pokedex.searchQuery) {
+    el.pokedexSearch.value = state.pokedex.searchQuery;
+  }
+  if (
+    el.pokedexOwnershipFilter &&
+    el.pokedexOwnershipFilter.value !== state.pokedex.ownershipFilter
+  ) {
+    el.pokedexOwnershipFilter.value = state.pokedex.ownershipFilter;
+  }
 
   if (state.pokedex.loading) {
-    el.pokedexMeta.textContent = "Loading all Pokemon entries...";
+    el.pokedexMeta.textContent = "Loading all Pokecards entries...";
     const loading = document.createElement("div");
     loading.className = "empty-state";
-    loading.textContent = "Loading Pokedex...";
+    loading.textContent = "Loading Pokecards...";
     el.pokedexGrid.appendChild(loading);
     renderPokedexGallery();
     return;
   }
 
   if (state.pokedex.error) {
-    el.pokedexMeta.textContent = "Failed to load Pokedex.";
+    el.pokedexMeta.textContent = "Failed to load Pokecards.";
     const error = document.createElement("div");
     error.className = "empty-state";
     error.textContent = state.pokedex.error;
@@ -2330,10 +3141,10 @@ function renderPokedex() {
   }
 
   if (!state.pokedex.entries.length) {
-    el.pokedexMeta.textContent = "No Pokemon data loaded yet.";
+    el.pokedexMeta.textContent = "No Pokecards data loaded yet.";
     const empty = document.createElement("div");
     empty.className = "empty-state";
-    empty.textContent = "No Pokemon entries available.";
+    empty.textContent = "No Pokecards entries available.";
     el.pokedexGrid.appendChild(empty);
     renderPokedexGallery();
     return;
@@ -2342,18 +3153,62 @@ function renderPokedex() {
   const ownedSpecies = getOwnedPokedexSpeciesSet();
   const ownedCardIds = new Set(state.binder.map((item) => item.id));
   const sortedEntries = sortPokedexEntries(state.pokedex.entries, ownedSpecies);
-  const ownedCount = sortedEntries.filter((entry) => ownedSpecies.has(entry.speciesKey)).length;
-  el.pokedexMeta.textContent = `${ownedCount}/${sortedEntries.length} Pokemon unlocked`;
+  const totalOwnedCount = sortedEntries.filter((entry) => ownedSpecies.has(entry.speciesKey)).length;
+
+  const searchQuery = state.pokedex.searchQuery.trim().toLowerCase();
+  let filteredEntries = sortedEntries;
+
+  if (searchQuery) {
+    filteredEntries = filteredEntries.filter((entry) => {
+      const nameMatch = String(entry.name || "").toLowerCase().includes(searchQuery);
+      const dexMatch = String(entry.dexNumber || "").includes(searchQuery);
+      return nameMatch || dexMatch;
+    });
+  }
+
+  if (state.pokedex.ownershipFilter === "owned") {
+    filteredEntries = filteredEntries.filter((entry) => ownedSpecies.has(entry.speciesKey));
+  } else if (state.pokedex.ownershipFilter === "missing") {
+    filteredEntries = filteredEntries.filter((entry) => !ownedSpecies.has(entry.speciesKey));
+  }
+
+  if (
+    state.pokedex.selectedSpeciesKey &&
+    !filteredEntries.some((entry) => entry.speciesKey === state.pokedex.selectedSpeciesKey)
+  ) {
+    state.pokedex.selectedSpeciesKey = "";
+  }
+
+  const filteredOwnedCount = filteredEntries.filter((entry) => ownedSpecies.has(entry.speciesKey)).length;
+  el.pokedexMeta.textContent = `${filteredOwnedCount}/${filteredEntries.length} shown • ${totalOwnedCount}/${sortedEntries.length} unlocked total`;
+
+  if (!filteredEntries.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No Pokecards match your current search/filter.";
+    el.pokedexGrid.appendChild(empty);
+    renderPokedexGallery();
+    return;
+  }
 
   const fragment = document.createDocumentFragment();
-  for (const entry of sortedEntries) {
+  for (const entry of filteredEntries) {
     const owned = ownedSpecies.has(entry.speciesKey);
-    const item = document.createElement("button");
-    item.type = "button";
+    const item = document.createElement("article");
+    item.tabIndex = 0;
+    item.setAttribute("role", "button");
     item.className = "pokedex-item";
     item.classList.toggle("is-unobtained", !owned);
     item.setAttribute("aria-label", `${entry.name} (${owned ? "owned" : "missing"})`);
     item.addEventListener("click", () => {
+      openPokedexGallery(entry.speciesKey);
+    });
+    item.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+
+      event.preventDefault();
       openPokedexGallery(entry.speciesKey);
     });
 
@@ -2364,7 +3219,7 @@ function renderPokedex() {
     const image = document.createElement("img");
     image.loading = "lazy";
     image.src = coverCard.images?.small || entry.images?.small || "";
-    image.alt = `${entry.name} pokedex card`;
+    image.alt = `${entry.name} pokecards card`;
     item.appendChild(image);
 
     const name = document.createElement("p");
@@ -2473,14 +3328,14 @@ function createCardElement(card) {
   const favoriteBtn = document.createElement("button");
   favoriteBtn.type = "button";
   favoriteBtn.className = "favorite-toggle";
-  favoriteBtn.classList.toggle("is-active", isFavoriteCard(card.id));
-  favoriteBtn.textContent = isFavoriteCard(card.id) ? "★" : "☆";
+  favoriteBtn.classList.toggle("is-active", isWishlistCard(card.id));
+  favoriteBtn.textContent = isWishlistCard(card.id) ? "★" : "☆";
   favoriteBtn.setAttribute(
     "aria-label",
-    isFavoriteCard(card.id) ? `Remove ${card.name} from favorites` : `Add ${card.name} to favorites`
+    isWishlistCard(card.id) ? `Remove ${card.name} from wishlist` : `Add ${card.name} to wishlist`
   );
   favoriteBtn.addEventListener("click", () => {
-    toggleFavoriteCard(card);
+    toggleWishlistCard(card);
   });
   article.appendChild(favoriteBtn);
 
@@ -2498,6 +3353,11 @@ function createCardElement(card) {
   rarity.textContent = `Rarity: ${card.rarity || "Unknown"}`;
   article.appendChild(rarity);
 
+  const value = document.createElement("p");
+  value.className = "meta-line card-value-line";
+  value.textContent = formatLastSoldValue(card);
+  article.appendChild(value);
+
   const pack = document.createElement("p");
   pack.className = "pack-chip";
   pack.textContent = card.set?.name || "Unknown pack";
@@ -2513,12 +3373,23 @@ function createCardElement(card) {
 
 function renderCards() {
   el.cardGrid.innerHTML = "";
+  const cardsToRender = state.query.sort === "wishlist_first"
+    ? [...state.cards].sort((left, right) => {
+      const leftWish = isWishlistCard(left.id) ? 1 : 0;
+      const rightWish = isWishlistCard(right.id) ? 1 : 0;
+      if (rightWish !== leftWish) {
+        return rightWish - leftWish;
+      }
 
-  if (!state.cards.length) {
+      return String(left.name || "").localeCompare(String(right.name || ""));
+    })
+    : state.cards;
+
+  if (!cardsToRender.length) {
     el.cardGrid.appendChild(el.emptyStateTemplate.content.cloneNode(true));
   } else {
     const fragment = document.createDocumentFragment();
-    for (const card of state.cards) {
+    for (const card of cardsToRender) {
       fragment.appendChild(createCardElement(card));
     }
     el.cardGrid.appendChild(fragment);
@@ -3797,11 +4668,12 @@ function startGachaReveal(payload) {
   state.gacha.firstFlipAnimating = false;
   state.gacha.lastPulls = payload.pulls || [];
   state.gacha.lastPackCount = toPositiveInt(payload.packCount, 1);
+  state.gacha.packsOpened += state.gacha.lastPackCount;
   const godPackHits = state.gacha.lastPulls.filter((packPull) => packPull.godPack).length;
   if (godPackHits > 0) {
     state.gacha.godPacksOpened += godPackHits;
-    saveBinder();
   }
+  saveBinder();
   state.gacha.revealSetName = payload.set?.name || "Set";
   state.gacha.revealQueue = buildGachaRevealQueue(state.gacha.lastPulls);
   state.gacha.rarestPullCardId = getRarestPulledCardId(state.gacha.revealQueue.map((item) => item.card));
@@ -4059,6 +4931,9 @@ function createGoalCard(goal) {
   });
   titleRow.appendChild(title);
 
+  const titleActions = document.createElement("div");
+  titleActions.className = "goal-title-actions";
+
   const toggleBtn = document.createElement("button");
   toggleBtn.type = "button";
   toggleBtn.className = "goal-toggle-btn";
@@ -4067,7 +4942,27 @@ function createGoalCard(goal) {
     setGoalOpen(goal.id, !isGoalOpen(goal.id));
     renderCollectionGoals();
   });
-  titleRow.appendChild(toggleBtn);
+  titleActions.appendChild(toggleBtn);
+
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.className = "goal-remove-btn";
+  removeBtn.textContent = "Remove";
+  removeBtn.addEventListener("click", () => {
+    const confirmed = window.confirm(`Remove goal board "${goal.title}"?`);
+    if (!confirmed) {
+      return;
+    }
+
+    state.collectionGoals = state.collectionGoals.filter((item) => item.id !== goal.id);
+    setGoalOpen(goal.id, false);
+    invalidateGoalProgressCache();
+    saveBinder();
+    renderCollectionGoals();
+  });
+  titleActions.appendChild(removeBtn);
+
+  titleRow.appendChild(titleActions);
 
   cover.appendChild(titleRow);
 
@@ -4373,7 +5268,6 @@ function createBinderItem(card, entry) {
 function renderBinder() {
   const visibleCards = getFilteredBinder();
   el.binderList.innerHTML = "";
-  queueCardPriceLookup(visibleCards.slice(0, 140));
 
   if (state.binderCollection.loading) {
     const loading = document.createElement("div");
@@ -4415,6 +5309,7 @@ function renderBinder() {
   renderCollectionGoals();
   renderPokedex();
   renderDashboard();
+  renderAchievements();
 }
 
 function removeBinderEntry(cardId) {
@@ -4495,6 +5390,20 @@ function attachEvents() {
       const title = link.dataset.title;
       const subtitle = link.dataset.subtitle;
       setActiveView(targetView, title, subtitle, link);
+    });
+  }
+
+  if (el.dashboardBadgeCustomizeBtn) {
+    el.dashboardBadgeCustomizeBtn.addEventListener("click", () => {
+      const achievementsLink = sidebarLinks.find(
+        (link) => String(link.dataset.view || "") === "achievements"
+      );
+      setActiveView(
+        "achievements",
+        achievementsLink?.dataset.title || "Achievements",
+        achievementsLink?.dataset.subtitle || "Unlock and pin your badges.",
+        achievementsLink || null
+      );
     });
   }
 
@@ -4674,6 +5583,25 @@ function attachEvents() {
     });
   }
 
+  if (el.pokedexSearch) {
+    el.pokedexSearch.addEventListener("input", (event) => {
+      state.pokedex.searchQuery = String(event.target.value || "").slice(0, 50);
+      renderPokedex();
+      saveBinder();
+    });
+  }
+
+  if (el.pokedexOwnershipFilter) {
+    el.pokedexOwnershipFilter.addEventListener("change", (event) => {
+      const nextValue = String(event.target.value || "all");
+      state.pokedex.ownershipFilter = POKEDEX_OWNERSHIP_FILTER_OPTIONS.includes(nextValue)
+        ? nextValue
+        : "all";
+      renderPokedex();
+      saveBinder();
+    });
+  }
+
   if (el.pokedexGalleryCloseBtn) {
     el.pokedexGalleryCloseBtn.addEventListener("click", () => {
       closePokedexGallery();
@@ -4737,6 +5665,32 @@ function attachEvents() {
       state.profile.ign = String(nextIgn || "").trim().slice(0, 30);
       saveBinder();
       renderDashboard();
+    });
+  }
+
+  if (el.addFriendBtn) {
+    el.addFriendBtn.addEventListener("click", () => {
+      addFriendFromInputs();
+    });
+  }
+
+  if (el.friendTrainerIdInput) {
+    el.friendTrainerIdInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+      event.preventDefault();
+      addFriendFromInputs();
+    });
+  }
+
+  if (el.friendIgnInput) {
+    el.friendIgnInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+      event.preventDefault();
+      addFriendFromInputs();
     });
   }
 
@@ -4875,6 +5829,9 @@ async function initialize() {
     shouldPersistProfile = true;
   }
   state.profile.favoriteCardIds = normalizeFavoriteCardIds(state.profile.favoriteCardIds);
+  state.profile.wishlistCardIds = normalizeWishlistCardIds(state.profile.wishlistCardIds);
+  state.profile.badgeShowcaseIds = normalizeBadgeShowcaseIds(state.profile.badgeShowcaseIds);
+  state.profile.friends = normalizeFriends(state.profile.friends);
   if (shouldPersistProfile) {
     saveBinder();
   }
@@ -4893,6 +5850,12 @@ async function initialize() {
   }
   if (el.pokedexSort) {
     el.pokedexSort.value = state.pokedex.sort;
+  }
+  if (el.pokedexSearch) {
+    el.pokedexSearch.value = state.pokedex.searchQuery;
+  }
+  if (el.pokedexOwnershipFilter) {
+    el.pokedexOwnershipFilter.value = state.pokedex.ownershipFilter;
   }
   renderCollectionGoals();
 

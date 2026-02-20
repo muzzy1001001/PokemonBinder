@@ -12,7 +12,8 @@
   --accent-yellow: #f4c44f;
   --accent-blue: #3a88d7;
   --shadow: 0 18px 36px rgba(22, 25, 33, 0.18);
-  --page-max-width: 1540px;
+  --page-max-width: 100%;
+  --sidebar-width: 300px;
   --cursor-pokeball: url("https://www.rw-designer.com/cursor-extern.php?id=113449"), auto;
 }
 
@@ -57,31 +58,40 @@ body.modal-open {
 .app-shell {
   position: relative;
   z-index: 1;
+  width: 100%;
   max-width: var(--page-max-width);
   margin: 0 auto;
   display: grid;
-  grid-template-columns: 276px 1fr;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   gap: 1rem;
   min-height: calc(100vh - 2rem);
 }
 
 .sidebar {
-  border-radius: 1rem;
-  padding: 1rem;
+  position: sticky;
+  top: 1rem;
+  align-self: start;
+  height: calc(100vh - 2rem);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  border-radius: 1.1rem;
+  padding: 1.05rem;
   background:
-    linear-gradient(170deg, rgba(29, 51, 83, 0.95), rgba(14, 30, 50, 0.97)),
+    radial-gradient(circle at 16% 10%, rgba(124, 177, 255, 0.2), transparent 35%),
+    radial-gradient(circle at 86% 92%, rgba(231, 79, 69, 0.22), transparent 40%),
+    linear-gradient(168deg, rgba(21, 43, 70, 0.98), rgba(11, 24, 41, 0.98)),
     var(--sidebar);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: var(--shadow);
-  color: #ecf3ff;
+  border: 1px solid rgba(166, 202, 255, 0.26);
+  box-shadow: 0 20px 34px rgba(7, 13, 24, 0.46);
+  color: #f0f6ff;
   display: grid;
   align-content: start;
-  gap: 1rem;
+  gap: 1.1rem;
 }
 
 .sidebar-brand {
-  padding: 0.55rem 0.25rem 0.75rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 0.58rem 0.32rem 0.84rem;
+  border-bottom: 1px solid rgba(173, 205, 255, 0.26);
 }
 
 .sidebar-brand-kicker {
@@ -96,48 +106,128 @@ body.modal-open {
 .sidebar-brand h2 {
   margin: 0.25rem 0 0;
   font-family: "Bungee", Impact, fantasy;
-  font-size: 1.2rem;
+  font-size: 1.26rem;
   letter-spacing: 0.02em;
+  color: #ffffff;
 }
 
 .sidebar-group {
   display: grid;
-  gap: 0.4rem;
+  gap: 0.5rem;
 }
 
 .sidebar-group-title {
   margin: 0 0 0.2rem;
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: rgba(234, 246, 255, 0.6);
+  letter-spacing: 0.1em;
+  color: rgba(214, 232, 255, 0.7);
   font-weight: 700;
+  padding-inline: 0.2rem;
 }
 
 .sidebar-link {
   width: 100%;
   text-align: left;
-  background: transparent;
-  color: #e8f1ff;
-  border: 1px solid transparent;
-  border-radius: 0.68rem;
-  padding: 0.6rem 0.7rem;
+  background: linear-gradient(140deg, rgba(44, 76, 116, 0.35), rgba(31, 54, 86, 0.12));
+  color: #eaf3ff;
+  border: 1px solid rgba(154, 191, 245, 0.24);
+  border-radius: 0.82rem;
+  padding: 0.7rem 0.8rem;
   font-weight: 700;
   cursor: var(--cursor-pokeball);
-  transition: background 150ms ease, border-color 150ms ease, transform 120ms ease;
+  transition: background 150ms ease, border-color 150ms ease, transform 120ms ease, box-shadow 150ms ease;
 }
 
 .sidebar-link:hover {
-  background: rgba(61, 99, 151, 0.36);
-  border-color: rgba(153, 198, 255, 0.4);
+  background: linear-gradient(140deg, rgba(70, 116, 176, 0.58), rgba(40, 70, 110, 0.35));
+  border-color: rgba(171, 207, 255, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  transform: translateX(1px);
 }
 
 .sidebar-link.is-active {
-  background: linear-gradient(145deg, #2e598d, #234773);
-  border-color: rgba(255, 255, 255, 0.28);
+  background: linear-gradient(145deg, #f4c44f, #eaa52a);
+  border-color: rgba(255, 226, 158, 0.82);
+  color: #1a2a42;
+  box-shadow:
+    0 8px 16px rgba(234, 165, 42, 0.24),
+    inset 0 1px 0 rgba(255, 248, 224, 0.5);
+}
+
+.sidebar-friends-section {
+  border: 1px solid rgba(156, 191, 245, 0.24);
+  border-radius: 0.86rem;
+  background: linear-gradient(150deg, rgba(49, 80, 118, 0.4), rgba(28, 48, 78, 0.2));
+  padding: 0.62rem;
+  display: grid;
+  gap: 0.38rem;
+}
+
+.sidebar-friends-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.3rem;
+}
+
+.sidebar-friends-title {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(214, 232, 255, 0.85);
+  font-weight: 800;
+}
+
+.sidebar .trainer-friend-count {
+  color: rgba(227, 239, 255, 0.8);
+}
+
+.sidebar .trainer-friend-form {
+  grid-template-columns: 1fr;
+}
+
+.sidebar .trainer-friend-form input {
+  border-color: rgba(157, 188, 236, 0.35);
+  background: rgba(15, 31, 52, 0.62);
+  color: #edf5ff;
+}
+
+.sidebar .trainer-friend-form input::placeholder {
+  color: rgba(213, 228, 247, 0.62);
+}
+
+.sidebar .trainer-friend-form button {
+  justify-self: start;
+  border-color: rgba(191, 217, 255, 0.46);
+  background: linear-gradient(145deg, rgba(223, 237, 255, 0.96), rgba(182, 212, 248, 0.96));
+  color: #163557;
+}
+
+.sidebar .trainer-friend-list {
+  max-height: 210px;
+}
+
+.sidebar .trainer-friend-item {
+  border-color: rgba(157, 189, 235, 0.28);
+  background: rgba(12, 27, 46, 0.58);
+}
+
+.sidebar .trainer-friend-ign {
+  color: #e7f0ff;
+}
+
+.sidebar .trainer-friend-id {
+  color: rgba(201, 219, 242, 0.82);
+}
+
+.sidebar .trainer-friend-empty {
+  color: rgba(209, 227, 248, 0.82);
 }
 
 .workspace {
+  min-width: 0;
   border-radius: 1rem;
   background:
     repeating-linear-gradient(
@@ -181,6 +271,10 @@ body.modal-open {
 .workspace-header p:last-child {
   margin: 0.25rem 0 0;
   color: var(--ink-soft);
+}
+
+#workspaceSubtitle:empty {
+  display: none;
 }
 
 .view {
@@ -230,8 +324,34 @@ body.modal-open {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: minmax(240px, 1.2fr) repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(260px, 1.45fr) minmax(170px, 1fr) minmax(180px, 0.95fr) minmax(170px, 0.95fr);
+  grid-template-areas:
+    "profile cards coins packs"
+    "profile badges coins gods";
   gap: 0.72rem;
+  align-items: stretch;
+}
+
+.dashboard-cards-owned-card {
+  grid-area: cards;
+}
+
+.dashboard-badges-card {
+  grid-area: badges;
+}
+
+.dashboard-coins-card {
+  grid-area: coins;
+  display: grid;
+  align-content: center;
+}
+
+.dashboard-packs-card {
+  grid-area: packs;
+}
+
+.dashboard-godpacks-card {
+  grid-area: gods;
 }
 
 .dashboard-card {
@@ -248,6 +368,7 @@ body.modal-open {
 }
 
 .dashboard-profile-card {
+  grid-area: profile;
   display: grid;
   justify-items: start;
   gap: 0.45rem;
@@ -308,6 +429,109 @@ body.modal-open {
   padding: 0;
 }
 
+.trainer-friends-section {
+  width: 100%;
+  display: grid;
+  gap: 0.42rem;
+  border-top: 1px solid #e2eaf4;
+  padding-top: 0.48rem;
+}
+
+.trainer-friends-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.trainer-friend-count {
+  margin: 0;
+  font-size: 0.72rem;
+  color: #4f6588;
+  font-weight: 700;
+}
+
+.trainer-friend-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 0.32rem;
+}
+
+.trainer-friend-form input {
+  min-width: 0;
+  border: 1px solid #cfdced;
+  border-radius: 0.5rem;
+  padding: 0.32rem 0.46rem;
+  font-size: 0.72rem;
+  background: #f8fbff;
+}
+
+.trainer-friend-form button {
+  border-radius: 0.54rem;
+  border: 1px solid #95b4de;
+  background: linear-gradient(145deg, #ddebff, #c9defb);
+  color: #1f466f;
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 0.28rem 0.55rem;
+}
+
+.trainer-friend-list {
+  display: grid;
+  gap: 0.3rem;
+  max-height: 150px;
+  overflow-y: auto;
+  padding-right: 0.1rem;
+}
+
+.trainer-friend-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  border: 1px solid #dde7f4;
+  border-radius: 0.56rem;
+  background: #f9fbff;
+  padding: 0.28rem 0.38rem;
+}
+
+.trainer-friend-meta {
+  min-width: 0;
+}
+
+.trainer-friend-ign,
+.trainer-friend-id {
+  margin: 0;
+}
+
+.trainer-friend-ign {
+  font-size: 0.73rem;
+  font-weight: 800;
+  color: #233f64;
+}
+
+.trainer-friend-id {
+  font-size: 0.64rem;
+  letter-spacing: 0.04em;
+  color: #5d7494;
+}
+
+.trainer-friend-remove {
+  border: 1px solid #efc7c7;
+  border-radius: 999px;
+  background: #fff0f0;
+  color: #8b2a2a;
+  font-size: 0.64rem;
+  font-weight: 700;
+  padding: 0.12rem 0.46rem;
+}
+
+.trainer-friend-empty {
+  margin: 0;
+  font-size: 0.69rem;
+  color: #5a6f8d;
+}
+
 .trainer-avatar-btn {
   width: 88px;
   aspect-ratio: 1;
@@ -357,6 +581,38 @@ body.modal-open {
   margin: 0;
   color: #586d8a;
   font-size: 0.78rem;
+}
+
+.dashboard-coin-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+}
+
+.dashboard-coin-icon {
+  width: 1.36rem;
+  height: 1.36rem;
+  object-fit: contain;
+}
+
+.cards-owned-badge-block {
+  margin-top: 0.35rem;
+  padding-top: 0.35rem;
+  border-top: 1px dashed #d8e3f1;
+  display: grid;
+  gap: 0.32rem;
+}
+
+.cards-owned-badge-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.42rem;
+}
+
+.cards-owned-badge-head .ghost-btn {
+  padding: 0.14rem 0.42rem;
+  font-size: 0.66rem;
 }
 
 .dashboard-top-showcase {
@@ -413,6 +669,220 @@ body.modal-open {
   gap: 0.72rem;
 }
 
+.panel-achievements {
+  display: grid;
+  gap: 0.78rem;
+}
+
+.achievement-section {
+  border: 1px solid #d7dfeb;
+  border-radius: 0.88rem;
+  background: rgba(255, 255, 255, 0.86);
+  padding: 0.68rem;
+  display: grid;
+  gap: 0.56rem;
+}
+
+.achievement-badge-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 0.48rem;
+}
+
+.achievement-badge-card {
+  border: 1px solid #dbe6f6;
+  border-radius: 0.76rem;
+  background: linear-gradient(165deg, #ffffff, #f4f8ff);
+  padding: 0.42rem;
+  display: grid;
+  gap: 0.24rem;
+  align-content: center;
+  justify-items: center;
+}
+
+.achievement-badge-card.is-pinned {
+  border-color: #6e96cc;
+  box-shadow: 0 0 0 2px rgba(114, 161, 224, 0.28);
+}
+
+.achievement-badge-sprite {
+  width: 42px;
+  height: 42px;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  object-fit: contain;
+  justify-self: center;
+}
+
+.achievement-badge-card.is-locked .achievement-badge-sprite {
+  filter: grayscale(1) brightness(0.58);
+}
+
+.achievement-badge-card h4 {
+  margin: 0;
+  font-size: 0.72rem;
+  text-align: center;
+  line-height: 1.15;
+}
+
+.achievement-badge-card p {
+  margin: 0;
+  font-size: 0.63rem;
+  color: #4f647f;
+  text-align: center;
+}
+
+.achievement-pin-btn {
+  border: 1px solid #cad7ea;
+  border-radius: 999px;
+  background: #f3f8ff;
+  color: #2c4b72;
+  font-size: 0.62rem;
+  font-weight: 800;
+  padding: 0.14rem 0.46rem;
+}
+
+.achievement-pin-btn.is-active {
+  border-color: #c9972c;
+  background: #ffeab5;
+  color: #664300;
+}
+
+.achievement-pin-btn:disabled {
+  opacity: 0.62;
+}
+
+.achievement-special-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.56rem;
+}
+
+.achievement-special-card {
+  border: 1px solid #d2deef;
+  border-radius: 0.8rem;
+  background: #f6f9ff;
+  padding: 0.62rem;
+  display: grid;
+  gap: 0.28rem;
+}
+
+.achievement-special-card.is-pinned {
+  box-shadow: 0 0 0 2px rgba(114, 161, 224, 0.28);
+}
+
+.achievement-special-sprite {
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.achievement-secret-mask {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  border: 1px dashed #a5b5cb;
+  background: #e8eef7;
+  color: #5a6e8f;
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+}
+
+.achievement-special-card.is-secret .achievement-special-sprite {
+  filter: grayscale(1) brightness(0.58);
+}
+
+.achievement-special-card h4 {
+  margin: 0;
+  font-size: 0.84rem;
+  color: #27446b;
+}
+
+.achievement-special-card p {
+  margin: 0;
+  font-size: 0.72rem;
+  color: #516882;
+}
+
+.achievement-special-card.is-unlocked {
+  border-color: #e2b24c;
+  background: linear-gradient(165deg, #fff8e5, #fff2cc);
+}
+
+.achievement-special-card.is-secret {
+  border-style: dashed;
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(231, 236, 246, 0.8) 0 10px,
+    rgba(220, 228, 242, 0.85) 10px 20px
+  );
+}
+
+.dashboard-badge-showcase {
+  display: grid;
+  gap: 0.58rem;
+}
+
+.dashboard-badge-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.dashboard-badge-grid,
+.cards-owned-badge-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 0.48rem;
+}
+
+.dashboard-badge-item {
+  border: 1px solid #d8e3f2;
+  border-radius: 0.72rem;
+  background: #ffffff;
+  padding: 0.36rem;
+  display: grid;
+  justify-items: center;
+  gap: 0.2rem;
+}
+
+.cards-owned-badge-grid .empty-state {
+  margin: 0;
+  font-size: 0.68rem;
+  padding: 0.35rem;
+}
+
+.dashboard-badge-sprite {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.dashboard-badge-item p {
+  margin: 0;
+  font-size: 0.64rem;
+  font-weight: 800;
+  text-align: center;
+  color: #2f4f76;
+  line-height: 1.15;
+}
+
+.dashboard-badge-remove {
+  border: 1px solid #d4dfef;
+  border-radius: 999px;
+  background: #f3f8ff;
+  color: #3b5a82;
+  font-size: 0.6rem;
+  font-weight: 700;
+  padding: 0.12rem 0.42rem;
+}
+
 .pokedex-layout {
   display: grid;
   gap: 0.72rem;
@@ -446,12 +916,14 @@ body.modal-open {
 }
 
 .pokedex-item {
+  position: relative;
   border: 1px solid #dbe5f4;
   border-radius: 0.62rem;
   background: #ffffff;
   padding: 0.34rem;
   display: grid;
   gap: 0.3rem;
+  cursor: var(--cursor-pokeball);
 }
 
 .pokedex-item.is-selected {
@@ -514,12 +986,20 @@ body.modal-open {
 }
 
 .pokedex-gallery-card {
+  position: relative;
   border: 1px solid #d7e2f1;
   border-radius: 0.68rem;
   background: #ffffff;
   padding: 0.35rem;
   display: grid;
   gap: 0.28rem;
+}
+
+.pokecards-gallery-favorite {
+  position: absolute;
+  top: 0.22rem;
+  right: 0.22rem;
+  z-index: 2;
 }
 
 .pokedex-gallery-image-btn {
@@ -542,6 +1022,22 @@ body.modal-open {
   margin: 0;
   font-size: 0.68rem;
   color: #4f647f;
+}
+
+.pokedex-gallery-value {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: #1f4f2f;
+}
+
+.pokedex-gallery-coin {
+  width: 0.95rem;
+  height: 0.95rem;
+  object-fit: contain;
 }
 
 .pokedex-preview-btn {
@@ -660,6 +1156,12 @@ body.modal-open {
   gap: 0.4rem;
 }
 
+.goal-title-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
 .goal-card-overlay h4 {
   margin: 0;
   font-size: 1rem;
@@ -681,6 +1183,16 @@ body.modal-open {
   border: 1px solid rgba(211, 227, 249, 0.56);
   background: rgba(246, 251, 255, 0.92);
   color: #29486e;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.16rem 0.54rem;
+}
+
+.goal-remove-btn {
+  border-radius: 999px;
+  border: 1px solid rgba(248, 187, 187, 0.68);
+  background: rgba(255, 236, 236, 0.94);
+  color: #8a2323;
   font-size: 0.68rem;
   font-weight: 700;
   padding: 0.16rem 0.54rem;
@@ -777,7 +1289,12 @@ body.modal-open {
 }
 
 .controls-pokedex {
-  grid-template-columns: minmax(220px, 320px);
+  grid-template-columns: minmax(180px, 320px) minmax(220px, 320px) minmax(160px, 220px);
+}
+
+.card-value-line {
+  font-weight: 800;
+  color: #1f5f3e;
 }
 
 .panel-gacha {
@@ -2402,6 +2919,9 @@ button:disabled {
     position: sticky;
     top: 0.8rem;
     z-index: 6;
+    height: auto;
+    max-height: none;
+    overflow: visible;
     grid-template-columns: 1fr 1fr;
     gap: 0.8rem;
   }
@@ -2410,19 +2930,28 @@ button:disabled {
     grid-column: 1 / -1;
   }
 
+  .sidebar-friends-group {
+    grid-column: 1 / -1;
+  }
+
   .binder-grid {
     max-height: none;
   }
 
   .dashboard-grid {
+    grid-template-areas: none;
     grid-template-columns: 1fr 1fr;
   }
 
-  .dashboard-profile-card {
-    grid-column: 1 / -1;
+  .dashboard-grid > .dashboard-card {
+    grid-area: auto !important;
   }
 
   .dashboard-top-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .achievement-badge-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
@@ -2487,6 +3016,16 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+  .dashboard-badge-grid,
+  .cards-owned-badge-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .achievement-badge-grid,
+  .achievement-special-grid {
+    grid-template-columns: 1fr;
+  }
+
   .pokedex-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -2498,6 +3037,10 @@ button:disabled {
 
   .trainer-ign-row {
     grid-template-columns: 1fr auto;
+  }
+
+  .trainer-friend-form {
+    grid-template-columns: 1fr;
   }
 
   .modal-reveal-info {

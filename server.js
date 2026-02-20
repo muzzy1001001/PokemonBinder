@@ -37,6 +37,23 @@ const BOOSTER_ART_ORIGIN = "https://pokesymbols.com";
 const EBAY_SEARCH_URL = "https://www.ebay.com/sch/i.html";
 const EBAY_BROWSE_API_URL = "https://api.ebay.com/buy/browse/v1/item_summary/search";
 const EBAY_OAUTH_TOKEN = process.env.EBAY_OAUTH_TOKEN || "";
+const PRICE_TRACKER_API_URL =
+  process.env.PRICE_TRACKER_API_URL ||
+  "https://www.pokemonpricetracker.com/api/v2/cards";
+const PRICE_TRACKER_API_TOKEN = process.env.PRICE_TRACKER_API_TOKEN || "";
+const PRICE_TRACKER_DAILY_LIMIT = Math.min(
+  Math.max(Number.parseInt(process.env.PRICE_TRACKER_DAILY_LIMIT || "85", 10) || 85, 1),
+  100
+);
+const PRICE_TRACKER_CACHE_TTL_MS =
+  Math.max(Number.parseInt(process.env.PRICE_TRACKER_CACHE_TTL_HOURS || "24", 10) || 24, 1) *
+  60 *
+  60 *
+  1000;
+const PRICE_TRACKER_MAX_LOOKUPS_PER_REQUEST = Math.max(
+  Number.parseInt(process.env.PRICE_TRACKER_MAX_LOOKUPS_PER_REQUEST || "12", 10) || 12,
+  1
+);
 
 const tcgClient = axios.create({
   baseURL: POKEMON_TCG_BASE_URL,
@@ -63,6 +80,11 @@ const boosterArtCache = {
 const lastSoldCache = new Map();
 let lastSoldApiCooldownUntil = 0;
 let ebayLookupBlockedUntil = 0;
+const priceTrackerCache = new Map();
+const priceTrackerUsage = {
+  dateKey: "",
+  count: 0
+};
 
 app.use(express.json());
 
@@ -99,11 +121,295 @@ function sanitizeCardId(value) {
     .slice(0, 40);
 }
 
+function isTruthyQueryValue(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  return ["1", "true", "yes", "on", "all"].includes(normalized);
+}
+
 function normalizeText(value) {
   return String(value || "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
+}
+
+function currentUtcDateKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function refreshPriceTrackerUsageWindow() {
+  const dateKey = currentUtcDateKey();
+  if (priceTrackerUsage.dateKey !== dateKey) {
+    priceTrackerUsage.dateKey = dateKey;
+    priceTrackerUsage.count = 0;
+  }
+}
+
+function canUsePriceTracker() {
+  if (!PRICE_TRACKER_API_TOKEN) {
+    return false;
+  }
+
+  refreshPriceTrackerUsageWindow();
+  return priceTrackerUsage.count < PRICE_TRACKER_DAILY_LIMIT;
+}
+
+function parseTcgPlayerProductId(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return "";
+  }
+
+  if (/^\d+$/.test(text)) {
+    return text;
+  }
+
+  const productMatch = text.match(/\/product\/(\d+)/i);
+  if (productMatch) {
+    return productMatch[1];
+  }
+
+  const fallbackMatch = text.match(/(\d{5,})/);
+  return fallbackMatch ? fallbackMatch[1] : "";
+}
+
+function extractTcgPlayerProductId(card) {
+  if (!card || typeof card !== "object") {
+    return "";
+  }
+
+  const directCandidates = [
+    card?.tcgplayer?.tcgplayerId,
+    card?.tcgplayer?.productId,
+    card?.tcgplayer?.id,
+    card?.tcgPlayerId
+  ];
+
+  for (const candidate of directCandidates) {
+    const parsed = parseTcgPlayerProductId(candidate);
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return parseTcgPlayerProductId(card?.tcgplayer?.url);
+}
+
+function extractPriceTrackerValue(payload) {
+  const card = payload?.data;
+  if (!card || typeof card !== "object") {
+    return 0;
+  }
+
+  const prices = card?.prices || {};
+  const candidates = [
+    Number.parseFloat(prices.market),
+    Number.parseFloat(prices.low)
+  ];
+
+  const variants = prices?.variants;
+  if (variants && typeof variants === "object") {
+    for (const printing of Object.values(variants)) {
+      if (!printing || typeof printing !== "object") {
+        continue;
+      }
+
+      for (const conditionValue of Object.values(printing)) {
+        if (!conditionValue || typeof conditionValue !== "object") {
+          continue;
+        }
+
+        candidates.push(Number.parseFloat(conditionValue.price));
+      }
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (Number.isFinite(candidate) && candidate > 0) {
+      return candidate;
+    }
+  }
+
+  return 0;
+}
+
+function normalizeCardNumberForMatch(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (!text) {
+    return { full: "", base: "" };
+  }
+
+  const full = text.replace(/[^a-z0-9/]/g, "");
+  const base = full.split("/")[0];
+  return { full, base };
+}
+
+function scorePriceTrackerCandidate(candidate, card) {
+  let score = 0;
+
+  const targetName = normalizeText(card?.name);
+  const targetSet = normalizeText(card?.set?.name);
+  const targetRarity = normalizeText(card?.rarity);
+  const targetArtist = normalizeText(card?.artist);
+  const targetNumber = normalizeCardNumberForMatch(card?.number);
+
+  const candidateName = normalizeText(candidate?.name);
+  const candidateSet = normalizeText(candidate?.setName);
+  const candidateRarity = normalizeText(candidate?.rarity);
+  const candidateArtist = normalizeText(candidate?.artist);
+  const candidateNumber = normalizeCardNumberForMatch(candidate?.cardNumber);
+
+  if (targetNumber.full && candidateNumber.full === targetNumber.full) {
+    score += 10;
+  } else if (targetNumber.base && candidateNumber.base === targetNumber.base) {
+    score += 7;
+  }
+
+  if (targetName && candidateName === targetName) {
+    score += 6;
+  } else if (targetName && candidateName.includes(targetName)) {
+    score += 3;
+  }
+
+  if (targetSet && candidateSet.includes(targetSet)) {
+    score += 4;
+  }
+
+  if (targetRarity && candidateRarity === targetRarity) {
+    score += 2;
+  }
+
+  if (targetArtist && candidateArtist === targetArtist) {
+    score += 2;
+  }
+
+  return score;
+}
+
+function pickPriceTrackerCardEntry(responsePayload, card) {
+  const data = responsePayload?.data;
+  const candidates = Array.isArray(data) ? data : data ? [data] : [];
+  if (!candidates.length) {
+    return null;
+  }
+
+  let best = candidates[0];
+  let bestScore = scorePriceTrackerCandidate(best, card);
+
+  for (let index = 1; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    const score = scorePriceTrackerCandidate(candidate, card);
+    if (score > bestScore) {
+      best = candidate;
+      bestScore = score;
+    }
+  }
+
+  return best;
+}
+
+function estimatePriceTrackerCost(responsePayload, fallbackCost = 1) {
+  const explicit = Number.parseInt(responsePayload?.metadata?.apiCallsConsumed?.total, 10);
+  if (Number.isFinite(explicit) && explicit > 0) {
+    return explicit;
+  }
+
+  const count = Number.parseInt(responsePayload?.metadata?.count, 10);
+  if (Number.isFinite(count) && count > 0) {
+    return count;
+  }
+
+  return fallbackCost;
+}
+
+async function fetchPriceTrackerValueForCard(card, budget = null) {
+  if (!canUsePriceTracker()) {
+    return 0;
+  }
+
+  const tcgPlayerId = extractTcgPlayerProductId(card);
+  const cacheKey = tcgPlayerId
+    ? `tcg:${tcgPlayerId}`
+    : card?.id
+      ? `card:${sanitizeCardId(card.id)}`
+      : "";
+
+  if (!tcgPlayerId && !cacheKey) {
+    return 0;
+  }
+
+  const reservedCost = tcgPlayerId ? 1 : 3;
+  if (priceTrackerUsage.count + reservedCost > PRICE_TRACKER_DAILY_LIMIT) {
+    return 0;
+  }
+
+  if (budget && budget.remaining < reservedCost) {
+    return 0;
+  }
+
+  const cached = priceTrackerCache.get(cacheKey);
+  if (
+    cached &&
+    Date.now() - cached.fetchedAt < PRICE_TRACKER_CACHE_TTL_MS &&
+    Number.isFinite(cached.value)
+  ) {
+    return Math.max(cached.value, 0);
+  }
+
+  if (budget) {
+    budget.remaining -= reservedCost;
+  }
+
+  try {
+    const params = tcgPlayerId
+      ? { tcgPlayerId }
+      : {
+          search: `${String(card?.name || "").trim()} ${String(card?.number || "").trim()}`.trim(),
+          set: String(card?.set?.name || "").trim(),
+          limit: 3
+        };
+
+    for (const [key, value] of Object.entries(params)) {
+      if (value === "") {
+        delete params[key];
+      }
+    }
+
+    const response = await axios.get(PRICE_TRACKER_API_URL, {
+      timeout: 10000,
+      headers: {
+        Authorization: `Bearer ${PRICE_TRACKER_API_TOKEN}`
+      },
+      params
+    });
+
+    const matchedCard = pickPriceTrackerCardEntry(response.data, card);
+    const value = matchedCard
+      ? extractPriceTrackerValue({ data: matchedCard })
+      : 0;
+    const actualCost = estimatePriceTrackerCost(response.data, reservedCost);
+    priceTrackerUsage.count += actualCost;
+    if (budget) {
+      budget.remaining += Math.max(reservedCost - actualCost, 0);
+    }
+
+    priceTrackerCache.set(cacheKey, {
+      value,
+      fetchedAt: Date.now()
+    });
+
+    return value;
+  } catch {
+    priceTrackerUsage.count += reservedCost;
+
+    priceTrackerCache.set(cacheKey, {
+      value: 0,
+      fetchedAt: Date.now()
+    });
+    return 0;
+  }
 }
 
 function parseDate(value) {
@@ -318,7 +624,8 @@ async function fetchEbayLastSoldValue(card) {
   }
 }
 
-async function resolveLastSoldValue(cardId) {
+async function resolveLastSoldValue(cardId, options = {}) {
+  const priceTrackerBudget = options.priceTrackerBudget || null;
   const sanitizedId = sanitizeCardId(cardId);
   if (!sanitizedId) {
     return 0;
@@ -333,6 +640,12 @@ async function resolveLastSoldValue(cardId) {
   if (localDataCache.loaded) {
     const localCard = localDataCache.cardsById.get(sanitizedId);
     cardForLookup = localCard || cardForLookup;
+    const priceTrackerValue = await fetchPriceTrackerValueForCard(cardForLookup, priceTrackerBudget);
+    if (priceTrackerValue > 0) {
+      lastSoldCache.set(sanitizedId, priceTrackerValue);
+      return priceTrackerValue;
+    }
+
     const localValue = extractLastSoldValue(localCard);
     if (localValue > 0) {
       lastSoldCache.set(sanitizedId, localValue);
@@ -354,6 +667,13 @@ async function resolveLastSoldValue(cardId) {
 
     const fetchedCard = response.data?.data || null;
     cardForLookup = fetchedCard || cardForLookup;
+
+    const priceTrackerValue = await fetchPriceTrackerValueForCard(cardForLookup, priceTrackerBudget);
+    if (priceTrackerValue > 0) {
+      lastSoldCache.set(sanitizedId, priceTrackerValue);
+      return priceTrackerValue;
+    }
+
     const value = extractLastSoldValue(fetchedCard);
     if (value > 0) {
       lastSoldCache.set(sanitizedId, value);
@@ -751,6 +1071,106 @@ function normalizeCardForClient(card) {
     subtypes: card.subtypes,
     tcgplayer: card.tcgplayer,
     cardmarket: card.cardmarket
+  };
+}
+
+function buildCardPriceGuideItem(card) {
+  const fallbackTcgplayerUrl = card?.id
+    ? `https://prices.pokemontcg.io/tcgplayer/${encodeURIComponent(card.id)}`
+    : "";
+  const fallbackCardmarketUrl = card?.id
+    ? `https://prices.pokemontcg.io/cardmarket/${encodeURIComponent(card.id)}`
+    : "";
+
+  return {
+    id: card.id,
+    name: card.name,
+    number: card.number,
+    rarity: card.rarity,
+    image: card.images?.small || "",
+    set: {
+      id: card.set?.id || "",
+      name: card.set?.name || "",
+      series: card.set?.series || "",
+      releaseDate: card.set?.releaseDate || ""
+    },
+    marketPrice: extractLastSoldValue(card),
+    tcgplayerUrl: card?.tcgplayer?.url || fallbackTcgplayerUrl,
+    cardmarketUrl: card?.cardmarket?.url || fallbackCardmarketUrl
+  };
+}
+
+async function getPriceGuideCards({ source, search, setId, sort, includeAll, page, pageSize, limit }) {
+  if (!includeAll) {
+    const responseData =
+      source === "github"
+        ? await getCardsFromLocal({ search, setId, sort, page, pageSize })
+        : await getCardsFromApi({ search, setId, sort, page, pageSize });
+
+    return {
+      cards: responseData.cards,
+      totalCount: responseData.totalCount,
+      page,
+      pageSize
+    };
+  }
+
+  if (source === "github") {
+    await ensureLocalDataLoaded();
+    const normalizedSearch = normalizeText(search);
+
+    let cards = localDataCache.cards.filter(
+      (card) => normalizeText(card.supertype) === "pokemon"
+    );
+
+    if (normalizedSearch) {
+      cards = cards.filter((card) =>
+        normalizeText(card.name).includes(normalizedSearch)
+      );
+    }
+
+    if (setId) {
+      cards = cards.filter((card) => card.set?.id === setId);
+    }
+
+    const sorted = sortLocalCards(cards, sort);
+    return {
+      cards: sorted.slice(0, limit),
+      totalCount: sorted.length,
+      page: 1,
+      pageSize: Math.min(limit, sorted.length)
+    };
+  }
+
+  const cards = [];
+  let cursor = 1;
+  let totalCount = Infinity;
+
+  while (cards.length < limit && cards.length < totalCount) {
+    const currentPageSize = Math.min(250, limit - cards.length);
+    const chunk = await getCardsFromApi({
+      search,
+      setId,
+      sort,
+      page: cursor,
+      pageSize: currentPageSize
+    });
+
+    totalCount = chunk.totalCount;
+    cards.push(...chunk.cards);
+
+    if (!chunk.cards.length) {
+      break;
+    }
+
+    cursor += 1;
+  }
+
+  return {
+    cards,
+    totalCount: Number.isFinite(totalCount) ? totalCount : cards.length,
+    page: 1,
+    pageSize: cards.length
   };
 }
 
@@ -1388,7 +1808,7 @@ app.get("/api/cards", async (req, res) => {
   const page = Math.max(Number.parseInt(req.query.page, 10) || 1, 1);
   const pageSize = Math.min(
     Math.max(Number.parseInt(req.query.pageSize, 10) || 24, 1),
-    40
+    250
   );
 
   try {
@@ -1415,6 +1835,56 @@ app.get("/api/cards", async (req, res) => {
   }
 });
 
+app.get("/api/price-guide", async (req, res) => {
+  const source = getActiveSource();
+  const search = sanitizeSearchTerm(req.query.search);
+  const setId = sanitizeSetId(req.query.setId);
+  const sort = API_SORT_MAP[req.query.sort] ? req.query.sort : "name_asc";
+  const includeAll = isTruthyQueryValue(req.query.all);
+  const page = Math.max(Number.parseInt(req.query.page, 10) || 1, 1);
+  const pageSize = Math.min(
+    Math.max(Number.parseInt(req.query.pageSize, 10) || 120, 1),
+    250
+  );
+  const limit = Math.min(
+    Math.max(Number.parseInt(req.query.limit, 10) || 6000, 1),
+    12000
+  );
+
+  try {
+    const responseData = await getPriceGuideCards({
+      source,
+      search,
+      setId,
+      sort,
+      includeAll,
+      page,
+      pageSize,
+      limit
+    });
+
+    const prices = responseData.cards.map((card) => buildCardPriceGuideItem(card));
+
+    res.json({
+      prices,
+      totalCount: responseData.totalCount,
+      returned: prices.length,
+      page: responseData.page,
+      pageSize: responseData.pageSize,
+      all: includeAll,
+      source
+    });
+  } catch (error) {
+    const statusCode = error.response?.status || 500;
+    const details = error.response?.data?.error?.message || error.message;
+    res.status(statusCode).json({
+      error: "Unable to build price guide",
+      details,
+      source
+    });
+  }
+});
+
 app.post("/api/card-prices", async (req, res) => {
   const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
   const uniqueIds = [...new Set(ids.map((id) => sanitizeCardId(id)).filter(Boolean))].slice(0, 120);
@@ -1424,29 +1894,8 @@ app.post("/api/card-prices", async (req, res) => {
     return;
   }
 
-  try {
-    if (getActiveSource() === "github") {
-      await ensureLocalDataLoaded();
-    }
-
-    const prices = {};
-
-    for (let index = 0; index < uniqueIds.length; index += 8) {
-      const chunk = uniqueIds.slice(index, index + 8);
-      const values = await Promise.all(chunk.map((id) => resolveLastSoldValue(id)));
-      chunk.forEach((id, offset) => {
-        prices[id] = values[offset] || 0;
-      });
-    }
-
-    res.json({ prices });
-  } catch (error) {
-    const details = error.response?.data?.error?.message || error.message;
-    res.status(500).json({
-      error: "Unable to resolve card prices",
-      details
-    });
-  }
+  const prices = Object.fromEntries(uniqueIds.map((id) => [id, 0]));
+  res.json({ prices });
 });
 
 app.get("/api/gacha/packs", async (_req, res) => {
@@ -1620,6 +2069,7 @@ app.listen(PORT, HOST, () => {
   console.log(`Pokemon deck app running on http://localhost:${PORT}`);
   console.log(`Listening on ${HOST}:${PORT}`);
   console.log(`Data source mode: ${POKEMON_DATA_SOURCE}`);
+  console.log("External price APIs disabled: using local POKECOINS value model");
   if (getActiveSource() === "github") {
     console.log(`Using local dataset: ${POKEMON_GITHUB_DATA_DIR}`);
   }
