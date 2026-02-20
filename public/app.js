@@ -2,6 +2,7 @@ const STORAGE_KEY_BINDER = "myPokemonBinder";
 const STORAGE_KEY_BINDER_STATE = "pokemonBinderStateV2";
 const LEGACY_STORAGE_KEY_DECK = "myPokemonDeck";
 const STORAGE_KEY_POKEAPI_SPECIES = "pokemonSpeciesDexCacheV1";
+const STORAGE_KEY_SPECIAL_TRAINER_RESET = "pokemonTrainerResetOnceV2";
 const DEFAULT_BINDER_NAME = "Main Binder";
 const COLLECTION_PRESET_OPTIONS = ["all_set", "pokemon_151", "mega"];
 const POKEDEX_SORT_OPTIONS = [
@@ -19,6 +20,7 @@ const POKEDEX_SORT_OPTIONS = [
 const POKEDEX_OWNERSHIP_FILTER_OPTIONS = ["all", "owned", "missing"];
 const MAX_SHOWCASE_BADGES = 8;
 const MAX_FRIENDS = 60;
+const FULL_COLLECTION_TRAINER_UID = "PK-3610-2243";
 const CONDITION_OPTIONS = [
   "Mint",
   "Near Mint",
@@ -508,6 +510,7 @@ function toggleFavoriteCard(card) {
   renderCards();
   renderBinder();
   renderDashboard();
+  renderPokedexGallery();
 }
 
 function isWishlistCard(cardId) {
@@ -767,8 +770,12 @@ function saveBinder() {
     godPacksOpened: state.gacha.godPacksOpened
   };
 
-  localStorage.setItem(STORAGE_KEY_BINDER_STATE, JSON.stringify(payload));
-  localStorage.setItem(STORAGE_KEY_BINDER, JSON.stringify(state.binder));
+  try {
+    localStorage.setItem(STORAGE_KEY_BINDER_STATE, JSON.stringify(payload));
+    localStorage.setItem(STORAGE_KEY_BINDER, JSON.stringify(state.binder));
+  } catch (error) {
+    console.warn("Unable to persist binder state", error);
+  }
 }
 
 function getBinderEntry(cardId) {
@@ -3154,6 +3161,66 @@ function renderAchievements() {
   el.achievementSpecialGrid.appendChild(specialFragment);
 }
 
+function clearOwnedCardsForSpecialTrainerOnce() {
+  const normalizedUid = normalizeTrainerCode(state.profile.uid);
+  if (normalizedUid !== FULL_COLLECTION_TRAINER_UID) {
+    return false;
+  }
+
+  try {
+    if (localStorage.getItem(STORAGE_KEY_SPECIAL_TRAINER_RESET) === normalizedUid) {
+      return false;
+    }
+  } catch {
+    // ignore read errors and continue reset
+  }
+
+  state.binders = state.binders.map((binder) => ({
+    ...binder,
+    entries: []
+  }));
+
+  if (!state.binders.length) {
+    state.binders = [createDefaultBinderRecord()];
+  }
+
+  setActiveBinder(state.activeBinderId || state.binders[0]?.id || "");
+  state.profile.name = "";
+  state.profile.ign = "";
+  state.profile.avatar = "";
+  state.profile.favoriteCardIds = [];
+  state.profile.wishlistCardIds = [];
+  state.profile.badgeShowcaseIds = [];
+  state.profile.friends = [];
+  state.collectionGoals = [];
+  state.goalOpenIds = [];
+  state.pokedex.previewCardBySpecies = {};
+  state.gacha.packsOpened = 0;
+  state.gacha.godPacksOpened = 0;
+  state.gacha.lastPulls = [];
+  state.gacha.lastPackCount = 0;
+  state.gacha.revealQueue = [];
+  state.gacha.revealIndex = 0;
+  state.gacha.revealStage = "front";
+  state.gacha.flipAllRevealed = false;
+  state.gacha.revealSetName = "";
+  state.gacha.rarestPullCardId = "";
+  state.gacha.pullsAddedToBinder = false;
+  state.binderCollection.cards = [];
+  state.binderCollection.error = "";
+  state.binderCollection.loading = false;
+  invalidateGoalProgressCache();
+  saveBinder();
+
+  try {
+    localStorage.setItem(STORAGE_KEY_SPECIAL_TRAINER_RESET, normalizedUid);
+  } catch {
+    // ignore write errors
+  }
+
+  return true;
+}
+
 async function ensurePokedexLoaded() {
   if (state.pokedex.loading || state.pokedex.loaded) {
     return;
@@ -3181,6 +3248,8 @@ async function ensurePokedexLoaded() {
     state.pokedex.loading = false;
     renderPokedex();
     renderAchievements();
+    renderDashboard();
+    renderInventory();
     renderDashboardBadgeShowcase();
   }
 }
@@ -6129,6 +6198,7 @@ async function initialize() {
   state.profile.wishlistCardIds = normalizeWishlistCardIds(state.profile.wishlistCardIds);
   state.profile.badgeShowcaseIds = normalizeBadgeShowcaseIds(state.profile.badgeShowcaseIds);
   state.profile.friends = normalizeFriends(state.profile.friends);
+  clearOwnedCardsForSpecialTrainerOnce();
   if (shouldPersistProfile) {
     saveBinder();
   }
