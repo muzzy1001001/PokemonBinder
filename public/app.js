@@ -3,6 +3,13 @@ const STORAGE_KEY_BINDER_STATE = "pokemonBinderStateV2";
 const LEGACY_STORAGE_KEY_DECK = "myPokemonDeck";
 const STORAGE_KEY_POKEAPI_SPECIES = "pokemonSpeciesDexCacheV1";
 const STORAGE_KEY_SPECIAL_TRAINER_RESET = "pokemonTrainerResetOnceV2";
+const STORAGE_KEY_PLAYER_DATA_WIPE_VERSION = "pokemonPlayerDataWipeVersion";
+const PLAYER_DATA_WIPE_VERSION = "2026-02-21-full-reset";
+const PLAYER_STATE_API_PATH = "/api/player-state";
+const AUTH_API_BASE_PATH = "/api/auth";
+const STORAGE_KEY_AUTH_TOKEN = "deckAuthTokenV1";
+const STORAGE_KEY_AUTH_USER = "deckAuthUserV1";
+const CLOUD_SAVE_DEBOUNCE_MS = 900;
 const DEFAULT_BINDER_NAME = "Main Binder";
 const COLLECTION_PRESET_OPTIONS = ["all_set", "pokemon_151", "mega"];
 const POKEDEX_SORT_OPTIONS = [
@@ -76,6 +83,7 @@ const state = {
     selectedSpeciesKey: "",
     previewCardBySpecies: {}
   },
+  achievementsSearch: "",
   totalCount: 0,
   page: 1,
   pageSize: 24,
@@ -91,6 +99,7 @@ const state = {
   },
   gacha: {
     packs: [],
+    setSearch: "",
     selectedSetId: "",
     packCount: 1,
     opening: false,
@@ -133,6 +142,9 @@ const state = {
 };
 
 const el = {
+  appShell: document.getElementById("appShell"),
+  authUserLabel: document.getElementById("authUserLabel"),
+  authLogoutBtn: document.getElementById("authLogoutBtn"),
   searchInput: document.getElementById("searchInput"),
   setFilter: document.getElementById("setFilter"),
   sortSelect: document.getElementById("sortSelect"),
@@ -144,6 +156,7 @@ const el = {
   binderStats: document.getElementById("binderStats"),
   workspaceTitle: document.getElementById("workspaceTitle"),
   workspaceSubtitle: document.getElementById("workspaceSubtitle"),
+  broadcastBanner: document.getElementById("broadcastBanner"),
   trainerAvatarBtn: document.getElementById("trainerAvatarBtn"),
   trainerAvatarImage: document.getElementById("trainerAvatarImage"),
   trainerAvatarInitial: document.getElementById("trainerAvatarInitial"),
@@ -203,6 +216,7 @@ const el = {
   pokedexGalleryGrid: document.getElementById("pokedexGalleryGrid"),
   pokedexGalleryCloseBtn: document.getElementById("pokedexGalleryCloseBtn"),
   achievementsMeta: document.getElementById("achievementsMeta"),
+  achievementsSearchInput: document.getElementById("achievementsSearchInput"),
   achievementBadgeGrid: document.getElementById("achievementBadgeGrid"),
   achievementSpecialGrid: document.getElementById("achievementSpecialGrid"),
   developerCard: document.getElementById("developerCard"),
@@ -210,6 +224,7 @@ const el = {
   gachaPopoutPanel: document.getElementById("gachaPopoutPanel"),
   gachaPopoutInfo: document.getElementById("gachaPopoutInfo"),
   gachaInfoToggleBtn: document.getElementById("gachaInfoToggleBtn"),
+  gachaSetSearchInput: document.getElementById("gachaSetSearchInput"),
   gachaPackPicker: document.getElementById("gachaPackPicker"),
   gachaPackCard: document.getElementById("gachaPackCard"),
   gachaCutLayer: document.getElementById("gachaCutLayer"),
@@ -257,6 +272,16 @@ const tiltState = {
   deltaX: 0,
   deltaY: 0
 };
+
+let cloudSaveTimer = null;
+let cloudSaveInFlight = false;
+let cloudSaveQueued = false;
+let isHydratingCloudState = false;
+let cloudSyncUnavailable = false;
+let appInitialized = false;
+let authToken = "";
+let authUser = null;
+let broadcastRefreshTimer = null;
 
 function toPositiveInt(value, fallback = 1) {
   const parsed = Number.parseInt(value, 10);
@@ -663,48 +688,239 @@ function setActiveBinder(binderId) {
   state.binder = target.entries;
 }
 
+function getAuthHeaders(extraHeaders = {}) {
+  const headers = { ...extraHeaders };
+  if (authToken) {
+    headers.Authorization = `Bearer ${authToken}`;
+  }
+  return headers;
+}
+
+function persistAuthSession(token, user) {
+  authToken = String(token || "").trim();
+  authUser = user && typeof user === "object" ? user : null;
+
+  try {
+    if (authToken) {
+      localStorage.setItem(STORAGE_KEY_AUTH_TOKEN, authToken);
+    } else {
+      localStorage.removeItem(STORAGE_KEY_AUTH_TOKEN);
+    }
+
+    if (authUser) {
+      localStorage.setItem(STORAGE_KEY_AUTH_USER, JSON.stringify(authUser));
+    } else {
+      localStorage.removeItem(STORAGE_KEY_AUTH_USER);
+    }
+  } catch {
+    // ignore storage write errors
+  }
+}
+
+function clearAuthSession() {
+  authToken = "";
+  authUser = null;
+  try {
+    localStorage.removeItem(STORAGE_KEY_AUTH_TOKEN);
+    localStorage.removeItem(STORAGE_KEY_AUTH_USER);
+  } catch {
+    // ignore storage write errors
+  }
+}
+
+function updateAuthUserLabel() {
+  if (!el.authUserLabel) {
+    return;
+  }
+
+  if (!authUser) {
+    el.authUserLabel.textContent = "";
+    return;
+  }
+
+  const username = String(authUser.username || "").trim();
+  const ingame = String(authUser.ingameName || "").trim();
+  el.authUserLabel.textContent = ingame ? `${ingame} (@${username})` : `@${username}`;
+}
+
+function renderBroadcastBanner(payload) {
+  if (!el.broadcastBanner) {
+    return;
+  }
+
+  const active = Boolean(payload?.active);
+  const message = String(payload?.message || "").trim();
+  if (!active || !message) {
+    el.broadcastBanner.hidden = true;
+    el.broadcastBanner.textContent = "";
+    return;
+  }
+
+  el.broadcastBanner.hidden = false;
+  el.broadcastBanner.textContent = message;
+}
+
+async function refreshBroadcastBanner() {
+  try {
+    const response = await fetch("/api/broadcast/current");
+    if (!response.ok) {
+      return;
+    }
+
+    const payload = await response.json();
+    renderBroadcastBanner(payload);
+  } catch {
+    // ignore broadcast fetch errors
+  }
+}
+
+function startBroadcastPolling() {
+  if (broadcastRefreshTimer) {
+    window.clearInterval(broadcastRefreshTimer);
+    broadcastRefreshTimer = null;
+  }
+
+  void refreshBroadcastBanner();
+  broadcastRefreshTimer = window.setInterval(() => {
+    void refreshBroadcastBanner();
+  }, 45000);
+}
+
+function showAppShell() {
+  if (el.appShell) {
+    el.appShell.hidden = false;
+  }
+  updateAuthUserLabel();
+  startBroadcastPolling();
+}
+
+async function authRequest(endpoint, options = {}) {
+  const response = await fetch(`${AUTH_API_BASE_PATH}${endpoint}`, {
+    ...options,
+    headers: getAuthHeaders(options.headers || {})
+  });
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  if (!response.ok) {
+    const message = payload?.error || `Request failed (${response.status})`;
+    throw new Error(message);
+  }
+
+  return payload;
+}
+
+async function restoreAuthFromStorage() {
+  try {
+    const token = String(localStorage.getItem(STORAGE_KEY_AUTH_TOKEN) || "").trim();
+    if (!token) {
+      return false;
+    }
+
+    authToken = token;
+
+    const payload = await authRequest("/me");
+    persistAuthSession(token, payload.user || null);
+    return true;
+  } catch {
+    clearAuthSession();
+    return false;
+  }
+}
+
+function attachSessionEvents() {
+  el.authLogoutBtn?.addEventListener("click", () => {
+    clearAuthSession();
+    window.location.replace("/login.html");
+  });
+}
+
+function applyPersistedBinderState(parsed) {
+  const binders = Array.isArray(parsed?.binders)
+    ? parsed.binders.map((binder, index) => normalizeBinderRecord(binder, index))
+    : [];
+
+  state.binders = binders.length ? binders : [createDefaultBinderRecord()];
+  state.profile.name = String(parsed?.profile?.name || "").slice(0, 40);
+  state.profile.ign = String(parsed?.profile?.ign || "").slice(0, 30);
+  state.profile.avatar = String(parsed?.profile?.avatar || "");
+  state.profile.uid = String(parsed?.profile?.uid || "").slice(0, 20) || generateTrainerUid();
+  state.profile.favoriteCardIds = normalizeFavoriteCardIds(parsed?.profile?.favoriteCardIds);
+  state.profile.wishlistCardIds = normalizeWishlistCardIds(parsed?.profile?.wishlistCardIds);
+  state.profile.badgeShowcaseIds = normalizeBadgeShowcaseIds(parsed?.profile?.badgeShowcaseIds);
+  state.profile.friends = normalizeFriends(parsed?.profile?.friends);
+  state.collectionGoals = Array.isArray(parsed?.collectionGoals)
+    ? parsed.collectionGoals.map((goal) => normalizeCollectionGoal(goal))
+    : [];
+  state.gacha.packsOpened = Math.max(toPositiveInt(parsed?.packsOpened, 0), 0);
+  state.gacha.godPacksOpened = Math.max(toPositiveInt(parsed?.godPacksOpened, 0), 0);
+  if (COLLECTION_PRESET_OPTIONS.includes(parsed?.binderCollection?.preset)) {
+    state.binderCollection.preset = parsed.binderCollection.preset;
+  }
+  state.binderCollection.setId = String(parsed?.binderCollection?.setId || "");
+  if (POKEDEX_SORT_OPTIONS.includes(parsed?.pokedex?.sort)) {
+    state.pokedex.sort = parsed.pokedex.sort;
+  }
+  state.pokedex.searchQuery = String(parsed?.pokedex?.searchQuery || "").slice(0, 50);
+  if (POKEDEX_OWNERSHIP_FILTER_OPTIONS.includes(parsed?.pokedex?.ownershipFilter)) {
+    state.pokedex.ownershipFilter = parsed.pokedex.ownershipFilter;
+  }
+  state.achievementsSearch = String(parsed?.achievementsSearch || "").slice(0, 60);
+  state.gacha.setSearch = String(parsed?.gacha?.setSearch || "").slice(0, 60);
+  if (parsed?.pokedex?.previewCardBySpecies && typeof parsed.pokedex.previewCardBySpecies === "object") {
+    state.pokedex.previewCardBySpecies = Object.fromEntries(
+      Object.entries(parsed.pokedex.previewCardBySpecies)
+        .filter(([key, value]) => Boolean(String(key || "").trim()) && Boolean(String(value || "").trim()))
+        .map(([key, value]) => [String(key), String(value)])
+    );
+  }
+  setActiveBinder(parsed?.activeBinderId || state.binders[0].id);
+}
+
+function buildPersistedBinderPayload() {
+  return {
+    binders: state.binders,
+    activeBinderId: state.activeBinderId,
+    profile: {
+      name: state.profile.name,
+      ign: state.profile.ign,
+      avatar: state.profile.avatar,
+      uid: state.profile.uid,
+      favoriteCardIds: state.profile.favoriteCardIds,
+      wishlistCardIds: state.profile.wishlistCardIds,
+      badgeShowcaseIds: state.profile.badgeShowcaseIds,
+      friends: state.profile.friends
+    },
+    collectionGoals: state.collectionGoals,
+    binderCollection: {
+      preset: state.binderCollection.preset,
+      setId: state.binderCollection.setId
+    },
+    pokedex: {
+      sort: state.pokedex.sort,
+      searchQuery: state.pokedex.searchQuery,
+      ownershipFilter: state.pokedex.ownershipFilter,
+      previewCardBySpecies: state.pokedex.previewCardBySpecies
+    },
+    achievementsSearch: state.achievementsSearch,
+    gacha: {
+      setSearch: state.gacha.setSearch
+    },
+    packsOpened: state.gacha.packsOpened,
+    godPacksOpened: state.gacha.godPacksOpened
+  };
+}
+
 function loadBinderState() {
   try {
     const stateRaw = localStorage.getItem(STORAGE_KEY_BINDER_STATE);
     if (stateRaw) {
-      const parsed = JSON.parse(stateRaw);
-      const binders = Array.isArray(parsed?.binders)
-        ? parsed.binders.map((binder, index) => normalizeBinderRecord(binder, index))
-        : [];
-
-      state.binders = binders.length ? binders : [createDefaultBinderRecord()];
-      state.profile.name = String(parsed?.profile?.name || "").slice(0, 40);
-      state.profile.ign = String(parsed?.profile?.ign || "").slice(0, 30);
-      state.profile.avatar = String(parsed?.profile?.avatar || "");
-      state.profile.uid = String(parsed?.profile?.uid || "").slice(0, 20) || generateTrainerUid();
-      state.profile.favoriteCardIds = normalizeFavoriteCardIds(parsed?.profile?.favoriteCardIds);
-      state.profile.wishlistCardIds = normalizeWishlistCardIds(parsed?.profile?.wishlistCardIds);
-      state.profile.badgeShowcaseIds = normalizeBadgeShowcaseIds(parsed?.profile?.badgeShowcaseIds);
-      state.profile.friends = normalizeFriends(parsed?.profile?.friends);
-      state.collectionGoals = Array.isArray(parsed?.collectionGoals)
-        ? parsed.collectionGoals.map((goal) => normalizeCollectionGoal(goal))
-        : [];
-      state.gacha.packsOpened = Math.max(toPositiveInt(parsed?.packsOpened, 0), 0);
-      state.gacha.godPacksOpened = Math.max(toPositiveInt(parsed?.godPacksOpened, 0), 0);
-      if (COLLECTION_PRESET_OPTIONS.includes(parsed?.binderCollection?.preset)) {
-        state.binderCollection.preset = parsed.binderCollection.preset;
-      }
-      state.binderCollection.setId = String(parsed?.binderCollection?.setId || "");
-      if (POKEDEX_SORT_OPTIONS.includes(parsed?.pokedex?.sort)) {
-        state.pokedex.sort = parsed.pokedex.sort;
-      }
-      state.pokedex.searchQuery = String(parsed?.pokedex?.searchQuery || "").slice(0, 50);
-      if (POKEDEX_OWNERSHIP_FILTER_OPTIONS.includes(parsed?.pokedex?.ownershipFilter)) {
-        state.pokedex.ownershipFilter = parsed.pokedex.ownershipFilter;
-      }
-      if (parsed?.pokedex?.previewCardBySpecies && typeof parsed.pokedex.previewCardBySpecies === "object") {
-        state.pokedex.previewCardBySpecies = Object.fromEntries(
-          Object.entries(parsed.pokedex.previewCardBySpecies)
-            .filter(([key, value]) => Boolean(String(key || "").trim()) && Boolean(String(value || "").trim()))
-            .map(([key, value]) => [String(key), String(value)])
-        );
-      }
-      setActiveBinder(parsed?.activeBinderId || state.binders[0].id);
+      applyPersistedBinderState(JSON.parse(stateRaw));
       return;
     }
 
@@ -736,45 +952,163 @@ function loadBinderState() {
   }
 }
 
-function saveBinder() {
+function clearAllPlayerDataOnce() {
+  try {
+    if (localStorage.getItem(STORAGE_KEY_PLAYER_DATA_WIPE_VERSION) === PLAYER_DATA_WIPE_VERSION) {
+      return;
+    }
+
+    const keysToRemove = [];
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      const normalizedKey = String(key || "").toLowerCase();
+      if (normalizedKey.startsWith("pokemon") || normalizedKey.startsWith("mypokemon")) {
+        keysToRemove.push(key);
+      }
+    }
+
+    for (const key of keysToRemove) {
+      if (key) {
+        localStorage.removeItem(key);
+      }
+    }
+
+    localStorage.setItem(STORAGE_KEY_PLAYER_DATA_WIPE_VERSION, PLAYER_DATA_WIPE_VERSION);
+  } catch (_error) {
+    // ignore storage access errors
+  }
+}
+
+async function loadPlayerStateFromCloud() {
+  if (cloudSyncUnavailable) {
+    return false;
+  }
+
+  if (!authToken) {
+    return false;
+  }
+
+  try {
+    const response = await fetch(PLAYER_STATE_API_PATH, {
+      headers: getAuthHeaders()
+    });
+    if (response.status === 503) {
+      cloudSyncUnavailable = true;
+      return false;
+    }
+
+    if (response.status === 401) {
+      clearAuthSession();
+      cloudSyncUnavailable = true;
+      return false;
+    }
+
+    if (!response.ok) {
+      throw new Error(`Cloud load failed (${response.status})`);
+    }
+
+    const payload = await response.json();
+    if (!payload?.state || typeof payload.state !== "object") {
+      return false;
+    }
+
+    isHydratingCloudState = true;
+    applyPersistedBinderState(payload.state);
+    saveBinder({ skipCloud: true });
+    return true;
+  } catch (error) {
+    console.warn("Unable to load player state from Supabase", error);
+    return false;
+  } finally {
+    isHydratingCloudState = false;
+  }
+}
+
+async function savePlayerStateToCloud() {
+  if (cloudSyncUnavailable) {
+    return;
+  }
+
+  if (cloudSaveInFlight) {
+    cloudSaveQueued = true;
+    return;
+  }
+
+  const uid = normalizeTrainerCode(state.profile.uid);
+  if (!uid || !authToken) {
+    return;
+  }
+
+  cloudSaveInFlight = true;
+  try {
+    const response = await fetch(PLAYER_STATE_API_PATH, {
+      method: "PUT",
+      headers: {
+        ...getAuthHeaders(),
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        state: buildPersistedBinderPayload()
+      })
+    });
+
+    if (response.status === 503) {
+      cloudSyncUnavailable = true;
+      return;
+    }
+
+    if (response.status === 401) {
+      clearAuthSession();
+      cloudSyncUnavailable = true;
+      return;
+    }
+
+    if (!response.ok) {
+      throw new Error(`Cloud save failed (${response.status})`);
+    }
+  } catch (error) {
+    console.warn("Unable to save player state to Supabase", error);
+  } finally {
+    cloudSaveInFlight = false;
+    if (cloudSaveQueued) {
+      cloudSaveQueued = false;
+      void savePlayerStateToCloud();
+    }
+  }
+}
+
+function queuePlayerStateCloudSave() {
+  if (isHydratingCloudState || cloudSyncUnavailable) {
+    return;
+  }
+
+  if (cloudSaveTimer) {
+    window.clearTimeout(cloudSaveTimer);
+  }
+
+  cloudSaveTimer = window.setTimeout(() => {
+    cloudSaveTimer = null;
+    void savePlayerStateToCloud();
+  }, CLOUD_SAVE_DEBOUNCE_MS);
+}
+
+function saveBinder(options = {}) {
   const active = getActiveBinderRecord();
   if (active) {
     active.entries = state.binder;
   }
 
-  const payload = {
-    binders: state.binders,
-    activeBinderId: state.activeBinderId,
-    profile: {
-      name: state.profile.name,
-      ign: state.profile.ign,
-      avatar: state.profile.avatar,
-      uid: state.profile.uid,
-      favoriteCardIds: state.profile.favoriteCardIds,
-      wishlistCardIds: state.profile.wishlistCardIds,
-      badgeShowcaseIds: state.profile.badgeShowcaseIds,
-      friends: state.profile.friends
-    },
-    collectionGoals: state.collectionGoals,
-    binderCollection: {
-      preset: state.binderCollection.preset,
-      setId: state.binderCollection.setId
-    },
-    pokedex: {
-      sort: state.pokedex.sort,
-      searchQuery: state.pokedex.searchQuery,
-      ownershipFilter: state.pokedex.ownershipFilter,
-      previewCardBySpecies: state.pokedex.previewCardBySpecies
-    },
-    packsOpened: state.gacha.packsOpened,
-    godPacksOpened: state.gacha.godPacksOpened
-  };
+  const payload = buildPersistedBinderPayload();
 
   try {
     localStorage.setItem(STORAGE_KEY_BINDER_STATE, JSON.stringify(payload));
     localStorage.setItem(STORAGE_KEY_BINDER, JSON.stringify(state.binder));
   } catch (error) {
     console.warn("Unable to persist binder state", error);
+  }
+
+  if (!options.skipCloud) {
+    queuePlayerStateCloudSave();
   }
 }
 
@@ -861,6 +1195,11 @@ function setActiveView(viewId, title, subtitle, activeLink = null) {
   if (viewId === "achievements") {
     void ensurePokedexLoaded();
     renderAchievements();
+    if (el.achievementsSearchInput) {
+      window.requestAnimationFrame(() => {
+        el.achievementsSearchInput.focus();
+      });
+    }
   }
 
   if (viewId === "inventory") {
@@ -896,8 +1235,38 @@ function setModalRevealMode(enabled) {
   }
 }
 
+function cardImageCandidateUrls(card, preferLarge = true) {
+  const large = String(card?.images?.large || "").trim();
+  const small = String(card?.images?.small || "").trim();
+  return preferLarge ? [large, small].filter(Boolean) : [small, large].filter(Boolean);
+}
+
+function applyCardImageSource(imageElement, card, options = {}) {
+  const preferLarge = options.preferLarge !== false;
+  const [primaryUrl = "", fallbackUrl = ""] = cardImageCandidateUrls(card, preferLarge);
+
+  imageElement.onerror = null;
+  if (!primaryUrl) {
+    imageElement.removeAttribute("src");
+    return;
+  }
+
+  if (fallbackUrl && fallbackUrl !== primaryUrl) {
+    imageElement.onerror = () => {
+      if (imageElement.src !== fallbackUrl) {
+        imageElement.src = fallbackUrl;
+        return;
+      }
+
+      imageElement.onerror = null;
+    };
+  }
+
+  imageElement.src = primaryUrl;
+}
+
 function setModalCardFace(card, showBackFirst = false, options = {}) {
-  el.modalCardFrontImage.src = card.images?.large || card.images?.small || "";
+  applyCardImageSource(el.modalCardFrontImage, card);
   el.modalCardFrontImage.alt = `${card.name} card preview`;
   el.modalCardFrontImage.classList.toggle("is-unobtained-preview", Boolean(options.grayscale));
   el.modalCardBackImage.src = "/cardback.jpg";
@@ -1108,7 +1477,43 @@ function parseCollectorNumber(card) {
   };
 }
 
+function isBasicEnergyCardForValue(card) {
+  const supertype = String(card?.supertype || "").toLowerCase();
+  const name = String(card?.name || "").toLowerCase();
+  const subtypes = Array.isArray(card?.subtypes)
+    ? card.subtypes.map((item) => String(item || "").toLowerCase())
+    : [];
+
+  if (supertype !== "energy" && !name.includes("energy")) {
+    return false;
+  }
+
+  if (subtypes.includes("basic")) {
+    return true;
+  }
+
+  const basicEnergyNames = new Set([
+    "grass energy",
+    "fire energy",
+    "water energy",
+    "lightning energy",
+    "psychic energy",
+    "fighting energy",
+    "darkness energy",
+    "metal energy",
+    "fairy energy"
+  ]);
+
+  return basicEnergyNames.has(name);
+}
+
 function getCardMarketBaseValue(card) {
+  const rarity = String(card?.rarity || "").toLowerCase();
+  if (isBasicEnergyCardForValue(card) && rarity.includes("hyper rare")) {
+    const commonBaseValue = Math.round(24 * stableCardVariance(card?.id));
+    return Math.max(commonBaseValue, 12);
+  }
+
   const tier = rarityValueTier(card);
   const baseByTier = {
     common: 24,
@@ -1124,7 +1529,6 @@ function getCardMarketBaseValue(card) {
     ? card.subtypes.map((item) => String(item || "").toLowerCase())
     : [];
   const name = String(card?.name || "").toLowerCase();
-  const rarity = String(card?.rarity || "").toLowerCase();
   const setName = String(card?.set?.name || "").toLowerCase();
 
   if (subtypes.includes("vstar")) {
@@ -1241,7 +1645,7 @@ function updateNextRevealPreview() {
   }
 
   el.modalNextCard.classList.remove("is-back");
-  el.modalNextCardImage.src = nextItem.card.images?.large || nextItem.card.images?.small || "";
+  applyCardImageSource(el.modalNextCardImage, nextItem.card);
   el.modalNextCardImage.alt = `${nextItem.card.name} next card`;
   el.modalNextCard.hidden = true;
 }
@@ -1591,7 +1995,7 @@ function renderGachaPreview(payload) {
 
       const image = document.createElement("img");
       image.loading = "lazy";
-      image.src = card.images?.small || card.images?.large || "";
+      applyCardImageSource(image, card, { preferLarge: false });
       image.alt = `${card.name} preview card`;
       if (!image.src) {
         image.classList.add("is-missing");
@@ -2047,7 +2451,7 @@ function renderDashboard() {
     article.appendChild(favoriteBtn);
 
     const image = document.createElement("img");
-    image.src = card.images?.small || "";
+    applyCardImageSource(image, card, { preferLarge: false });
     image.alt = `${card.name} card`;
     article.appendChild(image);
 
@@ -2237,7 +2641,7 @@ function renderInventory() {
 
     const image = document.createElement("img");
     image.loading = "lazy";
-    image.src = card.images?.small || "";
+    applyCardImageSource(image, card, { preferLarge: false });
     image.alt = `${card.name} card`;
     item.appendChild(image);
 
@@ -2616,40 +3020,34 @@ async function ensureSpeciesDexMapLoaded() {
   }
 
   try {
-    const response = await fetch("https://pokeapi.co/api/v2/pokemon-species?limit=2000");
-    if (!response.ok) {
-      throw new Error("Unable to load species map");
-    }
-
-    const payload = await response.json();
-    const map = {};
-    for (const item of payload.results || []) {
-      const name = String(item?.name || "").trim();
-      const dexNumber = extractDexNumberFromUrl(item?.url);
-      if (name && dexNumber) {
-        map[name] = dexNumber;
+    const localResponse = await fetch("/assets/pokemon/species-dex.json", { cache: "no-store" });
+    if (localResponse.ok) {
+      const localMap = await localResponse.json();
+      if (localMap && typeof localMap === "object") {
+        state.pokedex.speciesDexByName = localMap;
+        state.pokedex.speciesDexByCompact = buildCompactSpeciesMap(localMap);
+        try {
+          localStorage.setItem(
+            STORAGE_KEY_POKEAPI_SPECIES,
+            JSON.stringify({
+              fetchedAt: now,
+              map: localMap
+            })
+          );
+        } catch {
+          // ignore storage quota errors
+        }
+        state.pokedex.speciesMapLoaded = true;
+        return;
       }
     }
-
-    state.pokedex.speciesDexByName = map;
-    state.pokedex.speciesDexByCompact = buildCompactSpeciesMap(map);
-    try {
-      localStorage.setItem(
-        STORAGE_KEY_POKEAPI_SPECIES,
-        JSON.stringify({
-          fetchedAt: now,
-          map
-        })
-      );
-    } catch {
-      // ignore storage quota errors
-    }
   } catch {
-    state.pokedex.speciesDexByName = {};
-    state.pokedex.speciesDexByCompact = {};
-  } finally {
-    state.pokedex.speciesMapLoaded = true;
+    // fall back to empty local map
   }
+
+  state.pokedex.speciesDexByName = {};
+  state.pokedex.speciesDexByCompact = {};
+  state.pokedex.speciesMapLoaded = true;
 }
 
 function getOwnedPokedexSpeciesSet() {
@@ -2709,22 +3107,23 @@ function sortPokedexEntries(entries, ownedSpecies) {
 }
 
 function pokemonDbPixelBadgeUrl(speciesKey) {
-  const slug = String(speciesKey || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "");
-
+  const slug = String(speciesKey || "").trim().toLowerCase();
   if (!slug) {
     return "";
   }
 
-  return `https://img.pokemondb.net/sprites/black-white/anim/normal/${slug}.gif`;
+  const dexNumber = state.pokedex.speciesDexByName?.[slug];
+  if (Number.isFinite(dexNumber) && dexNumber > 0) {
+    return `/assets/pokemon/sprites/${dexNumber}.png`;
+  }
+
+  return "";
 }
 
 function pokemonSpriteFallbackUrl(dexNumber) {
   const dex = Number.parseInt(dexNumber, 10);
   if (Number.isFinite(dex) && dex > 0) {
-    return `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${dex}.png`;
+    return `/assets/pokemon/sprites/${dex}.png`;
   }
 
   return `data:image/svg+xml;utf8,${encodeURIComponent(
@@ -3057,12 +3456,30 @@ function renderAchievements() {
   }
 
   const pinnedSet = new Set(state.profile.badgeShowcaseIds);
+  const searchQuery = normalizePokemonKey(state.achievementsSearch);
+  const filteredSpeciesBadges = searchQuery
+    ? data.speciesBadges.filter((badge) => {
+      const haystack = normalizePokemonKey(`${badge.title} ${badge.id}`);
+      return haystack.includes(searchQuery);
+    })
+    : data.speciesBadges;
+  const filteredSpecialAchievements = searchQuery
+    ? data.specialAchievements.filter((achievement) => {
+      const haystack = normalizePokemonKey(
+        `${achievement.title} ${achievement.description} ${achievement.id}`
+      );
+      return haystack.includes(searchQuery);
+    })
+    : data.specialAchievements;
+  const filteredTotalCount = filteredSpeciesBadges.length + filteredSpecialAchievements.length;
+
   el.achievementsMeta.textContent =
     `${data.unlockedSpeciesCount}/${data.totalSpecies} species unlocked • ` +
-    `${data.unlockedSpecialCount}/3 special unlocked`;
+    `${data.unlockedSpecialCount}/3 special unlocked` +
+    (searchQuery ? ` • ${filteredTotalCount} match${filteredTotalCount === 1 ? "" : "es"}` : "");
 
   const badgeFragment = document.createDocumentFragment();
-  for (const badge of data.speciesBadges) {
+  for (const badge of filteredSpeciesBadges) {
     const card = document.createElement("article");
     card.className = "achievement-badge-card";
     card.classList.toggle("is-locked", !badge.unlocked);
@@ -3102,10 +3519,20 @@ function renderAchievements() {
 
     badgeFragment.appendChild(card);
   }
-  el.achievementBadgeGrid.appendChild(badgeFragment);
+
+  if (!filteredSpeciesBadges.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = searchQuery
+      ? "No Pokemon mastery badges match your search."
+      : "No Pokemon mastery badges available.";
+    el.achievementBadgeGrid.appendChild(empty);
+  } else {
+    el.achievementBadgeGrid.appendChild(badgeFragment);
+  }
 
   const specialFragment = document.createDocumentFragment();
-  for (const achievement of data.specialAchievements) {
+  for (const achievement of filteredSpecialAchievements) {
     const item = document.createElement("article");
     item.className = "achievement-special-card";
     item.classList.toggle("is-unlocked", achievement.unlocked);
@@ -3158,7 +3585,16 @@ function renderAchievements() {
     specialFragment.appendChild(item);
   }
 
-  el.achievementSpecialGrid.appendChild(specialFragment);
+  if (!filteredSpecialAchievements.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = searchQuery
+      ? "No special achievements match your search."
+      : "No special achievements available.";
+    el.achievementSpecialGrid.appendChild(empty);
+  } else {
+    el.achievementSpecialGrid.appendChild(specialFragment);
+  }
 }
 
 function clearOwnedCardsForSpecialTrainerOnce() {
@@ -3397,7 +3833,7 @@ function renderPokedexGallery() {
 
     const image = document.createElement("img");
     image.loading = "lazy";
-    image.src = card.images?.small || "";
+    applyCardImageSource(image, card, { preferLarge: false });
     image.alt = `${card.name} card`;
     imageButton.appendChild(image);
     item.appendChild(imageButton);
@@ -3562,7 +3998,12 @@ function renderPokedex() {
 
     const image = document.createElement("img");
     image.loading = "lazy";
-    image.src = coverCard.images?.small || entry.images?.small || "";
+    applyCardImageSource(image, {
+      images: {
+        large: coverCard.images?.large || entry.images?.large || "",
+        small: coverCard.images?.small || entry.images?.small || ""
+      }
+    }, { preferLarge: false });
     image.alt = `${entry.name} pokecards card`;
     item.appendChild(image);
 
@@ -3665,7 +4106,7 @@ function createCardElement(card) {
 
   const image = document.createElement("img");
   image.loading = "lazy";
-  image.src = card.images?.small || "";
+  applyCardImageSource(image, card, { preferLarge: false });
   image.alt = `${card.name} trading card`;
   article.appendChild(image);
 
@@ -3699,7 +4140,19 @@ function createCardElement(card) {
 
   const value = document.createElement("p");
   value.className = "meta-line card-value-line";
-  value.textContent = formatLastSoldValue(card);
+  value.textContent = "Value:";
+
+  const coin = document.createElement("img");
+  coin.className = "card-value-coin";
+  coin.src = "/pokecoin.gif";
+  coin.alt = "PokeCoin";
+  value.appendChild(coin);
+
+  const valueCount = document.createElement("span");
+  valueCount.textContent = formatPokeCoinCount(getCardLastSoldValue(card));
+  value.appendChild(valueCount);
+
+  value.setAttribute("aria-label", formatLastSoldValue(card));
   article.appendChild(value);
 
   const pack = document.createElement("p");
@@ -3765,6 +4218,14 @@ function renderGachaSetOptions() {
     return;
   }
 
+  const setSearchQuery = normalizePokemonKey(state.gacha.setSearch);
+  const visiblePacks = setSearchQuery
+    ? state.gacha.packs.filter((pack) => {
+      const haystack = normalizePokemonKey(`${pack.name} ${pack.series || ""} ${pack.id}`);
+      return haystack.includes(setSearchQuery);
+    })
+    : state.gacha.packs;
+
   const hasSelectedPack = state.gacha.packs.some((pack) => pack.id === state.gacha.selectedSetId);
   if (!hasSelectedPack) {
     state.gacha.selectedSetId = "";
@@ -3773,21 +4234,84 @@ function renderGachaSetOptions() {
     void loadAndRenderGachaPreview("");
   }
 
+  if (!visiblePacks.length) {
+    const empty = document.createElement("p");
+    empty.className = "gacha-pack-picker-empty";
+    empty.textContent = "No pack sets match your search.";
+    el.gachaPackPicker.appendChild(empty);
+    updateGachaPackPickerState();
+    return;
+  }
+
   const fragment = document.createDocumentFragment();
-  for (const pack of state.gacha.packs) {
+  for (const pack of visiblePacks) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "gacha-pack-option";
     button.dataset.setId = pack.id;
     button.setAttribute("role", "option");
 
-    if (pack.visual?.boosterArt) {
+    const packOptionArts = [...new Set([
+      ...(pack.visual?.boosterArts || []),
+      pack.visual?.boosterArt || ""
+    ])].filter(Boolean);
+
+    let startPackOptionShuffle = null;
+    let stopPackOptionShuffle = null;
+
+    if (packOptionArts.length) {
       const art = document.createElement("img");
       art.className = "gacha-pack-option-art";
-      art.src = pack.visual.boosterArt;
+      art.src = packOptionArts[0];
       art.alt = `${pack.name} pack art`;
       art.loading = "lazy";
       button.appendChild(art);
+
+      let packOptionShuffleTimer = null;
+      let packOptionShuffleIndex = 0;
+
+      const playPackOptionSlide = () => {
+        art.classList.remove("is-shuffling-slide");
+        void art.offsetWidth;
+        art.classList.add("is-shuffling-slide");
+      };
+
+      art.addEventListener("animationend", () => {
+        art.classList.remove("is-shuffling-slide");
+      });
+
+      stopPackOptionShuffle = () => {
+        if (packOptionShuffleTimer) {
+          window.clearInterval(packOptionShuffleTimer);
+          packOptionShuffleTimer = null;
+        }
+        packOptionShuffleIndex = 0;
+        if (art.src !== packOptionArts[0]) {
+          art.src = packOptionArts[0];
+        }
+      };
+
+      startPackOptionShuffle = () => {
+        if (
+          packOptionArts.length < 2 ||
+          packOptionShuffleTimer ||
+          state.gacha.opening ||
+          state.gacha.revealing
+        ) {
+          return;
+        }
+
+        packOptionShuffleTimer = window.setInterval(() => {
+          if (!button.isConnected) {
+            stopPackOptionShuffle?.();
+            return;
+          }
+
+          packOptionShuffleIndex = (packOptionShuffleIndex + 1) % packOptionArts.length;
+          art.src = packOptionArts[packOptionShuffleIndex];
+          playPackOptionSlide();
+        }, 520);
+      };
     } else {
       const fallbackArt = document.createElement("span");
       fallbackArt.className = "gacha-pack-option-fallback";
@@ -3822,6 +4346,8 @@ function renderGachaSetOptions() {
     button.appendChild(meta);
 
     button.addEventListener("click", () => {
+      stopPackOptionShuffle?.();
+
       if (state.gacha.opening || state.gacha.revealing) {
         return;
       }
@@ -3864,6 +4390,14 @@ function renderGachaSetOptions() {
       button.classList.add("is-popping");
     });
 
+    button.addEventListener("pointerenter", (event) => {
+      if (event.pointerType === "touch") {
+        return;
+      }
+
+      startPackOptionShuffle?.();
+    });
+
     const resetOptionTilt = () => {
       button.classList.remove("is-popping");
       button.style.removeProperty("--tilt-x");
@@ -3871,9 +4405,19 @@ function renderGachaSetOptions() {
       button.style.removeProperty("--lift-y");
     };
 
-    button.addEventListener("pointerleave", resetOptionTilt);
+    button.addEventListener("pointerleave", () => {
+      resetOptionTilt();
+      stopPackOptionShuffle?.();
+    });
     button.addEventListener("pointerup", resetOptionTilt);
-    button.addEventListener("pointercancel", resetOptionTilt);
+    button.addEventListener("pointercancel", () => {
+      resetOptionTilt();
+      stopPackOptionShuffle?.();
+    });
+    button.addEventListener("blur", () => {
+      resetOptionTilt();
+      stopPackOptionShuffle?.();
+    });
 
     fragment.appendChild(button);
   }
@@ -4752,7 +5296,7 @@ function createGachaCardElement(card, options = {}) {
 
   const image = document.createElement("img");
   image.loading = "lazy";
-  image.src = card.images?.small || "";
+  applyCardImageSource(image, card);
   image.alt = `${card.name} pull result`;
   container.appendChild(image);
 
@@ -5068,6 +5612,7 @@ async function openGachaPack() {
     const response = await fetch("/api/gacha/open", {
       method: "POST",
       headers: {
+        ...getAuthHeaders(),
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -5368,7 +5913,7 @@ function createGoalCard(goal) {
 
         const image = document.createElement("img");
         image.loading = "lazy";
-        image.src = previewCard.images?.small || "";
+        applyCardImageSource(image, previewCard, { preferLarge: false });
         image.alt = `${previewCard.name} card`;
         item.appendChild(image);
 
@@ -5551,7 +6096,7 @@ function createBinderItem(card, entry) {
   imageWrap.className = "binder-slot-image-wrap";
 
   const image = document.createElement("img");
-  image.src = card.images?.small || "";
+  applyCardImageSource(image, card, { preferLarge: false });
   image.alt = `${card.name} card`;
   imageWrap.appendChild(image);
   item.appendChild(imageWrap);
@@ -5957,6 +6502,21 @@ function attachEvents() {
     });
   }
 
+  if (el.achievementsSearchInput) {
+    el.achievementsSearchInput.addEventListener("input", (event) => {
+      state.achievementsSearch = String(event.target.value || "").slice(0, 60);
+      renderAchievements();
+      saveBinder();
+    });
+  }
+
+  if (el.gachaSetSearchInput) {
+    el.gachaSetSearchInput.addEventListener("input", (event) => {
+      state.gacha.setSearch = String(event.target.value || "").slice(0, 60);
+      renderGachaSetOptions();
+    });
+  }
+
   if (el.pokedexOwnershipFilter) {
     el.pokedexOwnershipFilter.addEventListener("change", (event) => {
       const nextValue = String(event.target.value || "all");
@@ -6188,12 +6748,35 @@ function attachEvents() {
 }
 
 async function initialize() {
+  clearAllPlayerDataOnce();
   loadBinderState();
   let shouldPersistProfile = false;
+  const accountUid = normalizeTrainerCode(authUser?.uid || "");
+  if (accountUid && state.profile.uid !== accountUid) {
+    state.profile.uid = accountUid;
+    shouldPersistProfile = true;
+  }
+
+  if (authUser?.ingameName && !String(state.profile.ign || "").trim()) {
+    state.profile.ign = String(authUser.ingameName).trim().slice(0, 30);
+    shouldPersistProfile = true;
+  }
+
+  if (authUser?.profilePicture && !String(state.profile.avatar || "").trim()) {
+    state.profile.avatar = String(authUser.profilePicture).trim();
+    shouldPersistProfile = true;
+  }
+
   if (!state.profile.uid) {
     state.profile.uid = generateTrainerUid();
     shouldPersistProfile = true;
   }
+
+  const loadedCloudState = await loadPlayerStateFromCloud();
+  if (loadedCloudState) {
+    shouldPersistProfile = false;
+  }
+
   state.profile.favoriteCardIds = normalizeFavoriteCardIds(state.profile.favoriteCardIds);
   state.profile.wishlistCardIds = normalizeWishlistCardIds(state.profile.wishlistCardIds);
   state.profile.badgeShowcaseIds = normalizeBadgeShowcaseIds(state.profile.badgeShowcaseIds);
@@ -6222,6 +6805,12 @@ async function initialize() {
   }
   if (el.pokedexSearch) {
     el.pokedexSearch.value = state.pokedex.searchQuery;
+  }
+  if (el.achievementsSearchInput) {
+    el.achievementsSearchInput.value = state.achievementsSearch;
+  }
+  if (el.gachaSetSearchInput) {
+    el.gachaSetSearchInput.value = state.gacha.setSearch;
   }
   if (el.pokedexOwnershipFilter) {
     el.pokedexOwnershipFilter.value = state.pokedex.ownershipFilter;
@@ -6277,4 +6866,38 @@ async function initialize() {
   renderBinder();
 }
 
-initialize();
+async function startApplication() {
+  showAppShell();
+
+  if (appInitialized) {
+    updateAuthUserLabel();
+    return;
+  }
+
+  appInitialized = true;
+  await initialize();
+}
+
+async function bootAuthenticatedApp() {
+  if (el.appShell) {
+    el.appShell.hidden = true;
+  }
+
+  attachSessionEvents();
+
+  const restored = await restoreAuthFromStorage();
+  if (!restored) {
+    window.location.replace("/login.html");
+    return;
+  }
+
+  try {
+    await startApplication();
+  } catch {
+    appInitialized = false;
+    clearAuthSession();
+    window.location.replace("/login.html");
+  }
+}
+
+void bootAuthenticatedApp();

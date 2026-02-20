@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Login - Pokemon Binder</title>
+    <link rel="stylesheet" href="/auth.css" />
+  </head>
+  <body data-auth-mode="login">
+    <main class="auth-page">
+      <div class="wrapper">
+        <p id="authMessage" class="auth-message" role="status" aria-live="polite"></p>
+
+        <div class="card-switch">
+          <label class="switch">
+            <input id="authModeToggle" class="toggle" type="checkbox" />
+            <span class="slider"></span>
+            <span class="card-side"></span>
+
+            <div class="flip-card__inner">
+              <div class="flip-card__front">
+                <div class="title">Log in</div>
+                <form id="authLoginForm" class="flip-card__form" autocomplete="on">
+                  <input
+                    id="authLoginUsername"
+                    type="text"
+                    placeholder="Username"
+                    name="username"
+                    class="flip-card__input"
+                    minlength="3"
+                    maxlength="24"
+                    required
+                  />
+                  <input
+                    id="authLoginPassword"
+                    type="password"
+                    placeholder="Password"
+                    name="password"
+                    class="flip-card__input"
+                    minlength="6"
+                    maxlength="120"
+                    required
+                  />
+                  <button id="authLoginSubmit" class="flip-card__btn" type="submit">Let's go!</button>
+                </form>
+              </div>
+
+              <div class="flip-card__back">
+                <div class="title">Sign up</div>
+                <form id="authRegisterForm" class="flip-card__form" autocomplete="on">
+                  <input
+                    id="authRegisterUsername"
+                    type="text"
+                    placeholder="Username"
+                    name="username"
+                    class="flip-card__input"
+                    minlength="3"
+                    maxlength="24"
+                    required
+                  />
+                  <input
+                    id="authRegisterIngame"
+                    type="text"
+                    placeholder="In-game Name"
+                    name="ingame"
+                    class="flip-card__input"
+                    maxlength="40"
+                  />
+                  <input
+                    id="authRegisterPassword"
+                    type="password"
+                    placeholder="Password"
+                    name="password"
+                    class="flip-card__input"
+                    minlength="6"
+                    maxlength="120"
+                    required
+                  />
+                  <button id="authRegisterSubmit" class="flip-card__btn" type="submit">Confirm!</button>
+                </form>
+              </div>
+            </div>
+          </label>
+        </div>
+      </div>
+    </main>
+
+    <script src="/auth.js" defer></script>
+  </body>
+</html>

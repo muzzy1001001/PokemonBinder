@@ -17,6 +17,9 @@ It supports two data providers:
 - Uses `cardback.jpg` for card backs and PokeSymbols booster pack artwork when available
 - Track your personal virtual binder with quantity, condition, and notes
 - Persist binder data in browser localStorage
+- Optional Supabase cloud sync for player state (binder/profile/favorites/goals/gacha stats)
+- Single auth page (`/login.html`) with login/signup flip-card before entering the app
+- Admin tools page at `/admin100401` (requires admin account)
 
 ## Run locally
 
@@ -45,6 +48,43 @@ It supports two data providers:
    ```
 
 5. Open `http://localhost:3000`
+
+## Supabase Setup (Optional)
+
+1. Create a Supabase project.
+2. Open SQL Editor and run `supabase/player_states.sql`.
+   - If you already created tables before, run it again to add moderation and broadcast fields.
+3. Copy `.env.example` to `.env` and set:
+
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY` (or `SUPABASE_SECRET_KEY`, server-only)
+   - `SUPABASE_PLAYER_STATES_TABLE` (default: `player_states`)
+   - `SUPABASE_PLAYER_ACCOUNTS_TABLE` (default: `player_accounts`)
+   - `SUPABASE_ADMIN_BROADCASTS_TABLE` (default: `admin_broadcasts`)
+   - `AUTH_JWT_SECRET` (required for login tokens)
+   - `AUTH_TOKEN_TTL` (optional, default `30d`)
+   - `ADMIN_SEED_USERNAME` and `ADMIN_SEED_PASSWORD` (seeded admin login)
+
+4. Restart the server.
+
+When configured, the app syncs player data through `/api/player-state` and enables auth endpoints:
+
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `GET /api/auth/me`
+
+Admin endpoints:
+
+- `GET /api/admin/summary`
+- `GET /api/admin/users`
+- `GET /api/admin/users/:uid/state`
+- `PATCH /api/admin/users/:uid/inventory`
+- `PATCH /api/admin/users/:uid/moderation`
+- `PATCH /api/admin/broadcast`
+
+Admin page route:
+
+- `/admin100401` (requires admin login)
 
 ## Data Source Mode
 

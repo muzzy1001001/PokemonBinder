@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin Panel</title>
+    <link rel="stylesheet" href="/admin100401.css" />
+  </head>
+  <body>
+    <main class="admin-shell">
+      <header class="admin-head">
+        <h1>Admin Panel</h1>
+        <div class="admin-head-actions">
+          <span id="adminIdentity" class="admin-identity">Checking session...</span>
+          <button id="adminRefreshBtn" type="button">Refresh</button>
+          <button id="adminLogoutBtn" type="button" class="ghost">Logout</button>
+        </div>
+      </header>
+
+      <p id="adminStatus" class="admin-status">Loading summary...</p>
+
+      <section class="admin-grid" aria-label="Admin metrics">
+        <article class="admin-card">
+          <p class="admin-label">Data Source</p>
+          <p id="adminSource" class="admin-value">-</p>
+        </article>
+        <article class="admin-card">
+          <p class="admin-label">Supabase</p>
+          <p id="adminSupabase" class="admin-value">-</p>
+        </article>
+        <article class="admin-card">
+          <p class="admin-label">Auth</p>
+          <p id="adminAuth" class="admin-value">-</p>
+        </article>
+        <article class="admin-card">
+          <p class="admin-label">Accounts</p>
+          <p id="adminAccounts" class="admin-value">-</p>
+        </article>
+        <article class="admin-card">
+          <p class="admin-label">Player States</p>
+          <p id="adminPlayerStates" class="admin-value">-</p>
+        </article>
+        <article class="admin-card">
+          <p class="admin-label">Sets</p>
+          <p id="adminSets" class="admin-value">-</p>
+        </article>
+        <article class="admin-card">
+          <p class="admin-label">Cards</p>
+          <p id="adminCards" class="admin-value">-</p>
+        </article>
+      </section>
+
+      <section class="admin-panel">
+        <div class="admin-panel-head">
+          <h2>Broadcast Message</h2>
+          <button id="adminBroadcastRefreshBtn" type="button" class="ghost">Load current</button>
+        </div>
+        <label>
+          Message
+          <textarea id="adminBroadcastMessage" rows="3" maxlength="500" placeholder="Type broadcast message"></textarea>
+        </label>
+        <label class="inline-check">
+          <input id="adminBroadcastActive" type="checkbox" />
+          Active
+        </label>
+        <button id="adminBroadcastSaveBtn" type="button">Send broadcast</button>
+      </section>
+
+      <section class="admin-split">
+        <section class="admin-panel">
+          <div class="admin-panel-head">
+            <h2>Users</h2>
+            <div class="inline-tools">
+              <input id="adminUserSearch" type="text" placeholder="Search uid / username / ign" />
+              <button id="adminUsersRefreshBtn" type="button" class="ghost">Search</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="admin-table" aria-label="Users table">
+              <thead>
+                <tr>
+                  <th>UID</th>
+                  <th>Username</th>
+                  <th>IGN</th>
+                  <th>Role</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="adminUsersTable"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="admin-panel">
+          <div class="admin-panel-head">
+            <h2 id="adminSelectedUserTitle">Selected User: none</h2>
+            <button id="adminSelectedRefreshBtn" type="button" class="ghost">Reload user</button>
+          </div>
+
+          <p id="adminSelectedUserMeta" class="subtle">Pick a user from the list.</p>
+
+          <div class="admin-group">
+            <h3>Moderation</h3>
+            <div class="inline-tools">
+              <input id="adminModerationMinutes" type="number" min="1" max="525600" placeholder="Minutes" />
+              <input id="adminModerationReason" type="text" maxlength="180" placeholder="Reason" />
+            </div>
+            <div class="inline-tools">
+              <button id="adminBanBtn" type="button">Ban</button>
+              <button id="adminUnbanBtn" type="button" class="ghost">Unban</button>
+              <button id="adminTimeoutBtn" type="button">Timeout</button>
+              <button id="adminUntimeoutBtn" type="button" class="ghost">Clear timeout</button>
+            </div>
+          </div>
+
+          <div class="admin-group">
+            <h3>Inventory Tools</h3>
+            <div class="inline-tools">
+              <input id="adminInventoryBinderId" type="text" maxlength="60" placeholder="Binder ID (optional)" />
+              <input id="adminInventoryCardId" type="text" maxlength="40" placeholder="Card ID (e.g. base1-4)" />
+              <input id="adminInventoryQty" type="number" min="1" max="999" value="1" />
+            </div>
+            <div class="inline-tools">
+              <button id="adminInventorySetQtyBtn" type="button">Set Qty</button>
+              <button id="adminInventoryAddQtyBtn" type="button">Add Qty</button>
+              <button id="adminInventoryRemoveBtn" type="button" class="ghost">Remove Card</button>
+            </div>
+          </div>
+
+          <div class="admin-group">
+            <h3>Inventory Summary</h3>
+            <p id="adminInventorySummary" class="subtle">No data loaded.</p>
+            <ul id="adminBindersList" class="binder-list"></ul>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="/admin100401.js" defer></script>
+  </body>
+</html>

@@ -9,7 +9,7 @@
   <body>
     <div class="binder-rings" aria-hidden="true"></div>
 
-    <div class="app-shell">
+    <div id="appShell" class="app-shell" hidden>
       <aside class="sidebar" aria-label="Sidebar Navigation">
         <div class="sidebar-brand">
           <p class="sidebar-brand-kicker">yawn's</p>
@@ -87,34 +87,6 @@
           </button>
         </div>
 
-        <div class="sidebar-group sidebar-friends-group">
-          <p class="sidebar-group-title">Friends</p>
-          <section class="sidebar-friends-section">
-            <div class="sidebar-friends-head">
-              <p class="sidebar-friends-title">Trainer Circle</p>
-              <p id="trainerFriendCount" class="trainer-friend-count">0 added</p>
-            </div>
-
-            <div class="trainer-friend-form sidebar-friend-form">
-              <input
-                id="friendTrainerIdInput"
-                type="text"
-                placeholder="Trainer ID (PK-1234-5678)"
-                maxlength="20"
-              />
-              <input
-                id="friendIgnInput"
-                type="text"
-                placeholder="Friend IGN (optional)"
-                maxlength="30"
-              />
-              <button id="addFriendBtn" type="button">Add Friend</button>
-            </div>
-
-            <div id="trainerFriendList" class="trainer-friend-list"></div>
-          </section>
-        </div>
-
         <div class="sidebar-group sidebar-developer-group">
           <button
             class="sidebar-link"
@@ -132,6 +104,11 @@
         <header class="workspace-header">
           <h1 id="workspaceTitle">Trainer Dashboard</h1>
           <p id="workspaceSubtitle"></p>
+          <p id="broadcastBanner" class="broadcast-banner" hidden></p>
+          <div class="workspace-auth-row">
+            <span id="authUserLabel" class="auth-user-label"></span>
+            <button id="authLogoutBtn" type="button" class="ghost-btn auth-logout-btn">Logout</button>
+          </div>
         </header>
 
         <section id="view-dashboard" class="view is-active" aria-label="Trainer Dashboard">
@@ -331,7 +308,6 @@
         <section id="view-inventory" class="view" aria-label="Inventory">
           <section class="panel panel-inventory">
             <div class="panel-heading">
-              <h2>Inventory</h2>
               <p id="inventoryMeta"></p>
             </div>
 
@@ -386,28 +362,6 @@
                   </div>
                 </div>
 
-                <div class="developer-hover-details" aria-hidden="true">
-                  <h3>yawn</h3>
-                  <div class="developer-hover-rows">
-                    <p class="developer-hover-row">
-                      <span class="developer-hover-icon" aria-hidden="true">📷</span>
-                      <span class="developer-hover-value">xfian.el</span>
-                    </p>
-                    <p class="developer-hover-row">
-                      <span class="developer-hover-icon" aria-hidden="true">💬</span>
-                      <span class="developer-hover-value">yzzum1001001</span>
-                    </p>
-                    <p class="developer-hover-row">
-                      <span class="developer-hover-icon" aria-hidden="true">✉</span>
-                      <span class="developer-hover-value">ceslacandula@gmail.com</span>
-                    </p>
-                    <p class="developer-hover-support">buy me a coffee</p>
-                    <p class="developer-hover-row">
-                      <span class="developer-hover-icon" aria-hidden="true">☕</span>
-                      <span class="developer-hover-value">gcash 09516834107</span>
-                    </p>
-                  </div>
-                </div>
               </button>
             </div>
           </section>
@@ -479,6 +433,15 @@
               <h2>Achievements</h2>
               <p id="achievementsMeta">Complete Pokecards and set goals to unlock badges.</p>
             </div>
+
+            <label class="achievement-search-field" for="achievementsSearchInput">
+              Search Achievements
+              <input
+                id="achievementsSearchInput"
+                type="search"
+                placeholder="Search badges or special achievements"
+              />
+            </label>
 
             <section class="achievement-section">
               <div class="panel-heading panel-heading-compact">
@@ -555,6 +518,14 @@
             <div class="controls controls-gacha">
               <div class="gacha-pack-picker-field">
                 <p class="gacha-pack-picker-title">Choose Pack Set</p>
+                <label class="gacha-pack-search-field" for="gachaSetSearchInput">
+                  Search Sets
+                  <input
+                    id="gachaSetSearchInput"
+                    type="search"
+                    placeholder="Search by set or series"
+                  />
+                </label>
                 <div
                   id="gachaPackPicker"
                   class="gacha-pack-picker"

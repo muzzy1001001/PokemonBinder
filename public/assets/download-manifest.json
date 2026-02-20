@@ -1,0 +1,30 @@
+{
+  "generatedAt": "2026-02-20T13:25:12.365Z",
+  "concurrency": 16,
+  "retries": 3,
+  "sources": {
+    "cards": "C:\\Users\\chaaa\\OneDrive\\Documents\\MyPokemonDeck\\data\\api-downloads\\20260220-202414\\cards.ndjson",
+    "sets": "C:\\Users\\chaaa\\OneDrive\\Documents\\MyPokemonDeck\\data\\api-downloads\\20260220-202414\\packs.sets.json",
+    "species": "C:\\Users\\chaaa\\OneDrive\\Documents\\MyPokemonDeck\\data\\api-downloads\\20260220-202414\\pokemons.species.json"
+  },
+  "results": {
+    "cards": {
+      "totalTasks": 20077,
+      "downloaded": 20025,
+      "skipped": 0,
+      "failed": 52
+    },
+    "sets": {
+      "totalTasks": 342,
+      "downloaded": 342,
+      "skipped": 0,
+      "failed": 0
+    },
+    "sprites": {
+      "totalTasks": 1025,
+      "downloaded": 1025,
+      "skipped": 0,
+      "failed": 0
+    }
+  }
+}

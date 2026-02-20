@@ -1,0 +1,29 @@
+{
+  "generatedAt": "2026-02-20T12:25:48.307Z",
+  "sources": {
+    "cards": "https://api.pokemontcg.io/v2/cards",
+    "packs": "https://api.pokemontcg.io/v2/sets",
+    "pokemons": "https://pokeapi.co/api/v2/pokemon-species?limit=2000&offset=0"
+  },
+  "files": {
+    "cards": {
+      "file": "cards.ndjson",
+      "totalCount": 20078,
+      "downloaded": 20078,
+      "pageSize": 0,
+      "source": "local-data"
+    },
+    "packs": {
+      "file": "packs.sets.json",
+      "totalCount": 171,
+      "downloaded": 171,
+      "pageSize": 0,
+      "source": "local-data"
+    },
+    "pokemons": {
+      "file": "pokemons.species.json",
+      "totalCount": 1025,
+      "downloaded": 1025
+    }
+  }
+}
