@@ -154,6 +154,17 @@ const moderationFallbackByUid = new Map();
 
 app.use(express.json({ limit: "6mb" }));
 
+function setPublicApiCacheHeaders(res, { browserSeconds = 45, edgeSeconds = 300 } = {}) {
+  const safeBrowserSeconds = Math.max(Number.parseInt(browserSeconds, 10) || 0, 0);
+  const safeEdgeSeconds = Math.max(Number.parseInt(edgeSeconds, 10) || 0, safeBrowserSeconds);
+  const staleWhileRevalidate = Math.max(safeEdgeSeconds * 2, 600);
+
+  res.set(
+    "Cache-Control",
+    `public, max-age=${safeBrowserSeconds}, s-maxage=${safeEdgeSeconds}, stale-while-revalidate=${staleWhileRevalidate}`
+  );
+}
+
 function sanitizeSearchTerm(value) {
   if (!value) {
     return "";
@@ -3695,11 +3706,13 @@ app.get("/api/sets", async (_req, res) => {
         (left, right) => parseDate(right.releaseDate) - parseDate(left.releaseDate)
       );
 
+      setPublicApiCacheHeaders(res, { browserSeconds: 120, edgeSeconds: 1800 });
       res.json({ sets: sets.map((set) => normalizeSetForClient(set)), source: "github" });
       return;
     }
 
     const sets = await getSetsFromApi();
+    setPublicApiCacheHeaders(res, { browserSeconds: 120, edgeSeconds: 1800 });
     res.json({ sets: sets.map((set) => normalizeSetForClient(set)), source: "api" });
   } catch (error) {
     const statusCode = error.response?.status || 500;
@@ -3731,6 +3744,7 @@ app.get("/api/cards", async (req, res) => {
 
     const normalizedCards = responseData.cards.map((card) => normalizeCardForClient(card));
 
+    setPublicApiCacheHeaders(res, { browserSeconds: 45, edgeSeconds: 420 });
     res.json({
       cards: normalizedCards,
       page,
@@ -3840,6 +3854,7 @@ app.get("/api/gacha/packs", async (_req, res) => {
         (left, right) => parseDate(right.releaseDate) - parseDate(left.releaseDate)
       );
 
+    setPublicApiCacheHeaders(res, { browserSeconds: 120, edgeSeconds: 1200 });
     res.json({ packs, source });
   } catch (error) {
     const statusCode = error.response?.status || 500;
@@ -3888,6 +3903,7 @@ app.get("/api/gacha/preview", async (req, res) => {
     }
 
     const previewData = buildGachaPreviewData(set, setCards);
+    setPublicApiCacheHeaders(res, { browserSeconds: 60, edgeSeconds: 600 });
     res.json({
       source,
       ...previewData

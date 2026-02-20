@@ -4,6 +4,7 @@ const LEGACY_STORAGE_KEY_DECK = "myPokemonDeck";
 const STORAGE_KEY_POKEAPI_SPECIES = "pokemonSpeciesDexCacheV1";
 const STORAGE_KEY_SPECIAL_TRAINER_RESET = "pokemonTrainerResetOnceV2";
 const STORAGE_KEY_PLAYER_DATA_WIPE_VERSION = "pokemonPlayerDataWipeVersion";
+const STORAGE_KEY_CARD_CATALOG_WARMED_AT = "pokemonCardCatalogWarmedAtV1";
 const PLAYER_DATA_WIPE_VERSION = "2026-02-21-full-reset";
 const PLAYER_STATE_API_PATH = "/api/player-state";
 const AUTH_API_BASE_PATH = "/api/auth";
@@ -28,6 +29,9 @@ const POKEDEX_OWNERSHIP_FILTER_OPTIONS = ["all", "owned", "missing"];
 const MAX_SHOWCASE_BADGES = 8;
 const MAX_FRIENDS = 60;
 const FULL_COLLECTION_TRAINER_UID = "PK-3610-2243";
+const CARD_CATALOG_WARM_TTL_MS = 1000 * 60 * 60 * 24;
+const CARD_CATALOG_PAGE_SIZE = 250;
+const CARD_CATALOG_MAX_PAGES = 260;
 const CONDITION_OPTIONS = [
   "Mint",
   "Near Mint",
@@ -138,6 +142,17 @@ const state = {
     rarestPullCardId: "",
     packsOpened: 0,
     godPacksOpened: 0
+  },
+  cardCatalog: {
+    loaded: false,
+    loading: false,
+    cards: [],
+    loadedAt: 0,
+    promise: null
+  },
+  achievementsCache: {
+    key: "",
+    data: null
   }
 };
 
@@ -177,8 +192,6 @@ const el = {
   dashboardNetWorthValue: document.getElementById("dashboardNetWorthValue"),
   dashboardPacksOpened: document.getElementById("dashboardPacksOpened"),
   dashboardGodPacks: document.getElementById("dashboardGodPacks"),
-  dashboardTopMeta: document.getElementById("dashboardTopMeta"),
-  dashboardTopCards: document.getElementById("dashboardTopCards"),
   dashboardBadgeMeta: document.getElementById("dashboardBadgeMeta"),
   dashboardBadgeGrid: document.getElementById("dashboardBadgeGrid"),
   dashboardBadgeCustomizeBtn: document.getElementById("dashboardBadgeCustomizeBtn"),
@@ -282,6 +295,267 @@ let appInitialized = false;
 let authToken = "";
 let authUser = null;
 let broadcastRefreshTimer = null;
+let serviceWorkerRegistrationAttempted = false;
+
+function registerAppServiceWorker() {
+  if (serviceWorkerRegistrationAttempted) {
+    return;
+  }
+
+  if (!("serviceWorker" in navigator)) {
+    return;
+  }
+
+  const isSecureContextLike =
+    window.location.protocol === "https:" ||
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1";
+  if (!isSecureContextLike) {
+    return;
+  }
+
+  const register = () => {
+    serviceWorkerRegistrationAttempted = true;
+    void navigator.serviceWorker.register("/sw.js").catch(() => {
+      // ignore service worker registration failures
+    });
+  };
+
+  if (document.readyState === "complete") {
+    register();
+    return;
+  }
+
+  window.addEventListener("load", register, { once: true });
+}
+
+function connectionAllowsCatalogWarmup() {
+  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  if (!connection) {
+    return true;
+  }
+
+  if (connection.saveData) {
+    return false;
+  }
+
+  const effectiveType = String(connection.effectiveType || "").toLowerCase();
+  return effectiveType !== "slow-2g" && effectiveType !== "2g";
+}
+
+function hasFreshCatalogWarmStamp() {
+  try {
+    const warmedAt = Number(localStorage.getItem(STORAGE_KEY_CARD_CATALOG_WARMED_AT) || 0);
+    if (!Number.isFinite(warmedAt) || warmedAt <= 0) {
+      return false;
+    }
+    return Date.now() - warmedAt < CARD_CATALOG_WARM_TTL_MS;
+  } catch {
+    return false;
+  }
+}
+
+function markCatalogWarmStamp() {
+  try {
+    localStorage.setItem(STORAGE_KEY_CARD_CATALOG_WARMED_AT, String(Date.now()));
+  } catch {
+    // ignore localStorage write failures
+  }
+}
+
+function parseReleaseDateForSort(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return 0;
+  }
+
+  const normalized = raw.replace(/\//g, "-");
+  const parsed = Date.parse(normalized);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+
+  return parsed;
+}
+
+function cardSortComparator(sort) {
+  switch (sort) {
+    case "name_desc":
+      return (left, right) => String(right.name || "").localeCompare(String(left.name || ""));
+    case "hp_asc":
+      return (left, right) => toPositiveInt(left.hp, 0) - toPositiveInt(right.hp, 0);
+    case "hp_desc":
+      return (left, right) => toPositiveInt(right.hp, 0) - toPositiveInt(left.hp, 0);
+    case "newest":
+      return (left, right) =>
+        parseReleaseDateForSort(right.set?.releaseDate) - parseReleaseDateForSort(left.set?.releaseDate);
+    case "oldest":
+      return (left, right) =>
+        parseReleaseDateForSort(left.set?.releaseDate) - parseReleaseDateForSort(right.set?.releaseDate);
+    case "name_asc":
+    default:
+      return (left, right) => String(left.name || "").localeCompare(String(right.name || ""));
+  }
+}
+
+function queryCardsFromCatalog({ search = "", setId = "", sort = "name_asc", page = 1, pageSize = 24 }) {
+  const normalizedSearch = String(search || "").trim().toLowerCase();
+  const normalizedSetId = String(setId || "").trim().toLowerCase();
+  let cards = state.cardCatalog.cards;
+
+  if (normalizedSetId) {
+    cards = cards.filter((card) => String(card?.set?.id || "").trim().toLowerCase() === normalizedSetId);
+  }
+
+  if (normalizedSearch) {
+    cards = cards.filter((card) => {
+      const haystack = `${card?.name || ""} ${card?.set?.name || ""}`.toLowerCase();
+      return haystack.includes(normalizedSearch);
+    });
+  }
+
+  const comparator = cardSortComparator(sort);
+  const sorted = [...cards].sort((left, right) => {
+    const sortedValue = comparator(left, right);
+    if (sortedValue) {
+      return sortedValue;
+    }
+    return String(left.id || "").localeCompare(String(right.id || ""));
+  });
+
+  const normalizedPage = Math.max(toPositiveInt(page, 1), 1);
+  const normalizedPageSize = Math.max(toPositiveInt(pageSize, 24), 1);
+  const start = (normalizedPage - 1) * normalizedPageSize;
+
+  return {
+    cards: sorted.slice(start, start + normalizedPageSize),
+    allCards: sorted,
+    totalCount: sorted.length
+  };
+}
+
+async function fetchCardCatalog(options = {}) {
+  const force = Boolean(options.force);
+
+  if (state.cardCatalog.loaded && !force) {
+    return state.cardCatalog.cards;
+  }
+
+  if (state.cardCatalog.promise) {
+    return state.cardCatalog.promise;
+  }
+
+  state.cardCatalog.loading = true;
+  state.cardCatalog.promise = (async () => {
+    let page = 1;
+    let totalCount = Infinity;
+    const cards = [];
+
+    while (cards.length < totalCount && page <= CARD_CATALOG_MAX_PAGES) {
+      const params = new URLSearchParams({
+        search: "",
+        setId: "",
+        sort: "name_asc",
+        page: String(page),
+        pageSize: String(CARD_CATALOG_PAGE_SIZE)
+      });
+
+      const response = await fetch(`/api/cards?${params.toString()}`);
+      if (!response.ok) {
+        throw new Error("Could not predownload card catalog");
+      }
+
+      const payload = await response.json();
+      const pageCards = Array.isArray(payload.cards) ? payload.cards : [];
+      totalCount = Number(payload.totalCount) || pageCards.length;
+      cards.push(...pageCards);
+
+      if (!pageCards.length) {
+        break;
+      }
+
+      page += 1;
+    }
+
+    const uniqueCards = new Map();
+    for (const card of cards) {
+      if (card?.id && !uniqueCards.has(card.id)) {
+        uniqueCards.set(card.id, card);
+      }
+    }
+
+    state.cardCatalog.cards = [...uniqueCards.values()];
+    state.cardCatalog.loaded = true;
+    state.cardCatalog.loadedAt = Date.now();
+    markCatalogWarmStamp();
+    return state.cardCatalog.cards;
+  })();
+
+  try {
+    return await state.cardCatalog.promise;
+  } finally {
+    state.cardCatalog.loading = false;
+    state.cardCatalog.promise = null;
+  }
+}
+
+function scheduleBackgroundCatalogWarmup() {
+  if (state.cardCatalog.loaded || state.cardCatalog.loading || state.cardCatalog.promise) {
+    return;
+  }
+
+  if (!connectionAllowsCatalogWarmup() || hasFreshCatalogWarmStamp()) {
+    return;
+  }
+
+  const triggerWarmup = () => {
+    void fetch("/api/sets").catch(() => {
+      // ignore background prewarm errors
+    });
+    void fetch("/api/gacha/packs").catch(() => {
+      // ignore background prewarm errors
+    });
+    void fetchCardCatalog().catch(() => {
+      // ignore background prewarm errors
+    });
+  };
+
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(triggerWarmup, { timeout: 6000 });
+    return;
+  }
+
+  window.setTimeout(triggerWarmup, 1400);
+}
+
+function achievementDependencyKey() {
+  if (!state.pokedex.loaded || !state.pokedex.entries.length) {
+    return "";
+  }
+
+  let hash = 2166136261;
+  for (const entry of state.binder) {
+    const token = `${entry.id}:${toPositiveInt(entry.ownedQty, 1)}|`;
+    for (let index = 0; index < token.length; index += 1) {
+      hash ^= token.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+  }
+
+  const binderFingerprint = `${state.binder.length}:${hash >>> 0}`;
+  const galleryCount = Object.keys(state.pokedex.galleryBySpecies || {}).length;
+  return [
+    state.pokedex.entries.length,
+    galleryCount,
+    state.sets.length,
+    binderFingerprint
+  ].join("|");
+}
+
+function clearAchievementDataCache() {
+  state.achievementsCache.key = "";
+  state.achievementsCache.data = null;
+}
 
 function toPositiveInt(value, fallback = 1) {
   const parsed = Number.parseInt(value, 10);
@@ -1914,6 +2188,39 @@ async function fetchCards() {
     ? "name_asc"
     : state.query.sort;
 
+  if (state.cardCatalog.loaded) {
+    const result = queryCardsFromCatalog({
+      search: state.query.search,
+      setId: state.query.setId,
+      sort: serverSort,
+      page: state.page,
+      pageSize: state.pageSize
+    });
+    state.cards = result.cards;
+    state.totalCount = result.totalCount;
+    return;
+  }
+
+  if (state.cardCatalog.promise) {
+    try {
+      await state.cardCatalog.promise;
+      if (state.cardCatalog.loaded) {
+        const result = queryCardsFromCatalog({
+          search: state.query.search,
+          setId: state.query.setId,
+          sort: serverSort,
+          page: state.page,
+          pageSize: state.pageSize
+        });
+        state.cards = result.cards;
+        state.totalCount = result.totalCount;
+        return;
+      }
+    } catch {
+      // ignore and use network fallback
+    }
+  }
+
   const params = new URLSearchParams({
     search: state.query.search,
     setId: state.query.setId,
@@ -2324,6 +2631,29 @@ async function fetchAllCollectionCards({
   pageSize = 40,
   maxPages = 80
 }) {
+  if (state.cardCatalog.loaded) {
+    return queryCardsFromCatalog({
+      search,
+      setId,
+      sort,
+      page: 1,
+      pageSize: Math.max(state.cardCatalog.cards.length, 1)
+    }).allCards;
+  }
+
+  if (state.cardCatalog.promise && !search && !setId) {
+    await state.cardCatalog.promise;
+    if (state.cardCatalog.loaded) {
+      return queryCardsFromCatalog({
+        search,
+        setId,
+        sort,
+        page: 1,
+        pageSize: Math.max(state.cardCatalog.cards.length, 1)
+      }).allCards;
+    }
+  }
+
   let page = 1;
   let totalCount = Infinity;
   const cards = [];
@@ -2358,6 +2688,34 @@ async function fetchAllCollectionCards({
   }
 
   return cards;
+}
+
+async function loadAllCardsForPokedex() {
+  if (state.cardCatalog.loaded) {
+    return state.cardCatalog.cards;
+  }
+
+  if (state.cardCatalog.promise) {
+    try {
+      return await state.cardCatalog.promise;
+    } catch {
+      // ignore and continue with fallback
+    }
+  }
+
+  if (connectionAllowsCatalogWarmup()) {
+    try {
+      return await fetchCardCatalog();
+    } catch {
+      // ignore and continue with fallback
+    }
+  }
+
+  return fetchAllCollectionCards({
+    sort: "name_asc",
+    pageSize: 250,
+    maxPages: 220
+  });
 }
 
 async function loadBinderCollectionCards() {
@@ -2457,13 +2815,6 @@ function renderDashboard() {
   }
   el.dashboardGodPacks.textContent = String(state.gacha.godPacksOpened);
 
-  if (el.dashboardTopMeta) {
-    const active = getActiveBinderRecord();
-    el.dashboardTopMeta.textContent = active
-      ? `Highest POKECOIN value cards in ${active.name}.`
-      : "Highest POKECOIN value cards in your active binder.";
-  }
-
   if (el.trainerIgnDisplay) {
     el.trainerIgnDisplay.textContent = state.profile.ign || "Unknown Trainer";
   }
@@ -2475,7 +2826,7 @@ function renderDashboard() {
   renderTrainerAvatar();
   renderTrainerFriends();
 
-  if (!el.dashboardTopCards) {
+  if (!el.dashboardFavoriteCards) {
     renderDashboardBadgeShowcase();
     return;
   }
@@ -2547,28 +2898,7 @@ function renderDashboard() {
     }
   }
 
-  el.dashboardTopCards.innerHTML = "";
-  const topCards = [...state.binder]
-    .sort((left, right) => getCardLastSoldValue(right) - getCardLastSoldValue(left))
-    .slice(0, 5);
-
-  if (!topCards.length) {
-    const empty = document.createElement("div");
-    empty.className = "empty-state";
-    empty.textContent = "No cards in this binder yet.";
-    el.dashboardTopCards.appendChild(empty);
-    renderDashboardBadgeShowcase();
-    return;
-  }
-
-  const fragment = document.createDocumentFragment();
-  for (const card of topCards) {
-    fragment.appendChild(createDashboardCard(card));
-  }
-
-  el.dashboardTopCards.appendChild(fragment);
   renderDashboardBadgeShowcase();
-
 }
 
 function renderInventory() {
@@ -3201,6 +3531,15 @@ function getAchievementData() {
     return null;
   }
 
+  const cacheKey = achievementDependencyKey();
+  if (!cacheKey) {
+    return null;
+  }
+
+  if (state.achievementsCache.key === cacheKey && state.achievementsCache.data) {
+    return state.achievementsCache.data;
+  }
+
   const ownedCardIds = new Set(state.binder.map((item) => item.id));
   const allCardsById = new Map();
   const rawSpeciesBadges = [];
@@ -3338,7 +3677,7 @@ function getAchievementData() {
 
   const allAchievements = [...speciesBadges, ...specialAchievements];
 
-  return {
+  const data = {
     totalSpecies: speciesBadges.length,
     unlockedSpeciesCount: speciesBadges.filter((badge) => badge.unlocked).length,
     unlockedSpecialCount: specialAchievements.filter((badge) => badge.unlocked).length,
@@ -3346,6 +3685,10 @@ function getAchievementData() {
     specialAchievements,
     allAchievements
   };
+
+  state.achievementsCache.key = cacheKey;
+  state.achievementsCache.data = data;
+  return data;
 }
 
 function toggleBadgeShowcase(badgeId, achievementData = null) {
@@ -3694,6 +4037,7 @@ function clearOwnedCardsForSpecialTrainerOnce() {
   state.binderCollection.error = "";
   state.binderCollection.loading = false;
   invalidateGoalProgressCache();
+  clearAchievementDataCache();
   saveBinder();
 
   try {
@@ -3716,16 +4060,13 @@ async function ensurePokedexLoaded() {
 
   try {
     await ensureSpeciesDexMapLoaded();
-    const cards = await fetchAllCollectionCards({
-      sort: "name_asc",
-      pageSize: 120,
-      maxPages: 220
-    });
+    const cards = await loadAllCardsForPokedex();
 
     const pokedexData = buildPokedexEntries(cards, state.pokedex.speciesDexByName);
     state.pokedex.entries = pokedexData.entries;
     state.pokedex.galleryBySpecies = pokedexData.galleryBySpecies;
     state.pokedex.loaded = true;
+    clearAchievementDataCache();
   } catch (error) {
     state.pokedex.error = error.message || "Could not load Pokecards.";
   } finally {
@@ -4103,6 +4444,7 @@ function upsertBinderCard(card, quantity = 1) {
       existing.tcgplayer = card.tcgplayer;
     }
     invalidateGoalProgressCache();
+    clearAchievementDataCache();
     return;
   }
 
@@ -4127,6 +4469,7 @@ function upsertBinderCard(card, quantity = 1) {
   });
 
   invalidateGoalProgressCache();
+  clearAchievementDataCache();
 }
 
 function createCardElement(card) {
@@ -6253,6 +6596,7 @@ function renderBinder() {
 function removeBinderEntry(cardId) {
   state.binder = state.binder.filter((entry) => entry.id !== cardId);
   invalidateGoalProgressCache();
+  clearAchievementDataCache();
   saveBinder();
   renderCards();
   renderBinder();
@@ -6273,6 +6617,7 @@ function updateBinderQuantity(cardId, nextQty) {
   entry.ownedQty = Math.min(99, qty);
   entry.updatedAt = Date.now();
   invalidateGoalProgressCache();
+  clearAchievementDataCache();
   saveBinder();
   renderCards();
   renderBinder();
@@ -6884,12 +7229,15 @@ async function initialize() {
     if (state.binderCollection.preset === "all_set" && !state.binderCollection.setId && state.sets[0]) {
       state.binderCollection.setId = state.sets[0].id;
     }
+    scheduleBackgroundCatalogWarmup();
   } catch {
     const fallbackOption = document.createElement("option");
     fallbackOption.value = "";
     fallbackOption.textContent = "Sets unavailable";
     el.setFilter.appendChild(fallbackOption);
   }
+
+  scheduleBackgroundCatalogWarmup();
 
   if (el.binderCollectionPreset) {
     el.binderCollectionPreset.value = state.binderCollection.preset;
@@ -6915,6 +7263,7 @@ async function initialize() {
 }
 
 async function startApplication() {
+  registerAppServiceWorker();
   showAppShell();
 
   if (appInitialized) {
