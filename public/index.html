@@ -52,6 +52,15 @@
           <button
             class="sidebar-link"
             type="button"
+            data-view="inventory"
+            data-title="Inventory"
+            data-subtitle=""
+          >
+            <span>Inventory</span>
+          </button>
+          <button
+            class="sidebar-link"
+            type="button"
             data-view="pokedex"
             data-title="Pokecards"
             data-subtitle=""
@@ -104,6 +113,18 @@
 
             <div id="trainerFriendList" class="trainer-friend-list"></div>
           </section>
+        </div>
+
+        <div class="sidebar-group sidebar-developer-group">
+          <button
+            class="sidebar-link"
+            type="button"
+            data-view="developer"
+            data-title="About Developer"
+            data-subtitle=""
+          >
+            <span>About Developer</span>
+          </button>
         </div>
       </aside>
 
@@ -306,6 +327,91 @@
             </div>
 
             <div id="binderList" class="binder-grid"></div>
+            </div>
+          </section>
+        </section>
+
+        <section id="view-inventory" class="view" aria-label="Inventory">
+          <section class="panel panel-inventory">
+            <div class="panel-heading">
+              <h2>Inventory</h2>
+              <p id="inventoryMeta"></p>
+            </div>
+
+            <div class="controls controls-inventory">
+              <label>
+                Search
+                <input
+                  id="inventorySearch"
+                  type="search"
+                  placeholder="Name or set"
+                />
+              </label>
+
+              <label>
+                Sort
+                <select id="inventorySort">
+                  <option value="qty_desc">Quantity High-Low</option>
+                  <option value="qty_asc">Quantity Low-High</option>
+                  <option value="value_desc">Highest Value</option>
+                  <option value="name_asc">Name A-Z</option>
+                  <option value="name_desc">Name Z-A</option>
+                  <option value="newest">Recently Added</option>
+                </select>
+              </label>
+
+              <label>
+                Filter Rarity
+                <select id="inventoryRarityFilter">
+                  <option value="">All rarities</option>
+                </select>
+              </label>
+            </div>
+
+            <div id="inventoryList" class="inventory-list"></div>
+          </section>
+        </section>
+
+        <section id="view-developer" class="view" aria-label="About Developer">
+          <section class="panel panel-developer">
+            <div class="panel-heading">
+              <h2>about the dev</h2>
+            </div>
+
+            <div class="developer-layout">
+              <button id="developerCard" type="button" class="developer-card developer-flip-card" aria-label="Flip developer card">
+                <div class="developer-card-inner">
+                  <div class="developer-card-face developer-card-front">
+                    <img src="/me.png" alt="Developer" class="developer-card-art" draggable="false" />
+                  </div>
+                  <div class="developer-card-face developer-card-back">
+                    <img src="/cardback.jpg" alt="Pokemon card back" class="developer-card-back-art" draggable="false" />
+                  </div>
+                </div>
+
+                <div class="developer-hover-details" aria-hidden="true">
+                  <h3>yawn</h3>
+                  <div class="developer-hover-rows">
+                    <p class="developer-hover-row">
+                      <span class="developer-hover-icon" aria-hidden="true">📷</span>
+                      <span class="developer-hover-value">xfian.el</span>
+                    </p>
+                    <p class="developer-hover-row">
+                      <span class="developer-hover-icon" aria-hidden="true">💬</span>
+                      <span class="developer-hover-value">yzzum1001001</span>
+                    </p>
+                    <p class="developer-hover-row">
+                      <span class="developer-hover-icon" aria-hidden="true">✉</span>
+                      <span class="developer-hover-value">ceslacandula@gmail.com</span>
+                    </p>
+                    <p class="developer-hover-support">buy me a coffee</p>
+                    <p class="developer-hover-row">
+                      <span class="developer-hover-icon" aria-hidden="true">☕</span>
+                      <span class="developer-hover-value">gcash 09516834107</span>
+                    </p>
+                  </div>
+                </div>
+              </button>
             </div>
           </section>
         </section>

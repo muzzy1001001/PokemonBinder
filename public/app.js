@@ -47,6 +47,11 @@ const state = {
   collectionGoals: [],
   goalProgressCache: new Map(),
   goalOpenIds: [],
+  inventory: {
+    search: "",
+    sort: "qty_desc",
+    rarity: ""
+  },
   binderCollection: {
     preset: "all_set",
     setId: "",
@@ -179,6 +184,11 @@ const el = {
   goalSetSelect: document.getElementById("goalSetSelect"),
   addGoalBtn: document.getElementById("addGoalBtn"),
   goalGrid: document.getElementById("goalGrid"),
+  inventoryMeta: document.getElementById("inventoryMeta"),
+  inventorySearch: document.getElementById("inventorySearch"),
+  inventorySort: document.getElementById("inventorySort"),
+  inventoryRarityFilter: document.getElementById("inventoryRarityFilter"),
+  inventoryList: document.getElementById("inventoryList"),
   pokedexLayout: document.getElementById("pokedexLayout"),
   pokedexMeta: document.getElementById("pokedexMeta"),
   pokedexSearch: document.getElementById("pokedexSearch"),
@@ -193,6 +203,7 @@ const el = {
   achievementsMeta: document.getElementById("achievementsMeta"),
   achievementBadgeGrid: document.getElementById("achievementBadgeGrid"),
   achievementSpecialGrid: document.getElementById("achievementSpecialGrid"),
+  developerCard: document.getElementById("developerCard"),
   gachaPopout: document.getElementById("gachaPopout"),
   gachaPopoutPanel: document.getElementById("gachaPopoutPanel"),
   gachaPopoutInfo: document.getElementById("gachaPopoutInfo"),
@@ -827,9 +838,7 @@ function setActiveView(viewId, title, subtitle, activeLink = null) {
     el.workspaceTitle.textContent = title;
   }
 
-  if (subtitle) {
-    el.workspaceSubtitle.textContent = subtitle;
-  }
+  el.workspaceSubtitle.textContent = typeof subtitle === "string" ? subtitle : "";
 
   if (viewId === "finder") {
     window.requestAnimationFrame(() => {
@@ -845,6 +854,15 @@ function setActiveView(viewId, title, subtitle, activeLink = null) {
   if (viewId === "achievements") {
     void ensurePokedexLoaded();
     renderAchievements();
+  }
+
+  if (viewId === "inventory") {
+    renderInventory();
+  }
+
+  if (viewId === "developer") {
+    initializeDeveloperCardInteraction();
+    resetDeveloperCardToBack();
   }
 }
 
@@ -2094,6 +2112,235 @@ function renderDashboard() {
 
 }
 
+function renderInventory() {
+  if (!el.inventoryList || !el.inventoryMeta) {
+    return;
+  }
+
+  el.inventoryList.innerHTML = "";
+
+  if (el.inventorySearch && el.inventorySearch.value !== state.inventory.search) {
+    el.inventorySearch.value = state.inventory.search;
+  }
+  if (el.inventorySort && el.inventorySort.value !== state.inventory.sort) {
+    el.inventorySort.value = state.inventory.sort;
+  }
+
+  const rarityOptions = [...new Set(state.binder.map((card) => String(card.rarity || "Unknown")))].sort(
+    (left, right) => left.localeCompare(right)
+  );
+  if (el.inventoryRarityFilter) {
+    const currentValue = state.inventory.rarity;
+    const currentOptions = ["", ...rarityOptions];
+    const existingOptions = Array.from(el.inventoryRarityFilter.options).map((option) => option.value);
+    const needsRefresh =
+      existingOptions.length !== currentOptions.length ||
+      existingOptions.some((value, index) => value !== currentOptions[index]);
+
+    if (needsRefresh) {
+      el.inventoryRarityFilter.innerHTML = "";
+      const allOption = document.createElement("option");
+      allOption.value = "";
+      allOption.textContent = "All rarities";
+      el.inventoryRarityFilter.appendChild(allOption);
+
+      for (const rarity of rarityOptions) {
+        const option = document.createElement("option");
+        option.value = rarity;
+        option.textContent = rarity;
+        el.inventoryRarityFilter.appendChild(option);
+      }
+    }
+    if (el.inventoryRarityFilter.value !== currentValue) {
+      el.inventoryRarityFilter.value = currentValue;
+    }
+  }
+
+  const search = state.inventory.search.trim().toLowerCase();
+  let ownedCards = [...state.binder].filter((card) => {
+    if (state.inventory.rarity && String(card.rarity || "Unknown") !== state.inventory.rarity) {
+      return false;
+    }
+
+    if (!search) {
+      return true;
+    }
+
+    const haystack = `${card.name || ""} ${card.set?.name || ""}`.toLowerCase();
+    return haystack.includes(search);
+  });
+
+  ownedCards.sort((left, right) => {
+    const leftQty = toPositiveInt(left.ownedQty, 1);
+    const rightQty = toPositiveInt(right.ownedQty, 1);
+
+    switch (state.inventory.sort) {
+      case "qty_asc": {
+        const byQty = leftQty - rightQty;
+        if (byQty) {
+          return byQty;
+        }
+        return String(left.name || "").localeCompare(String(right.name || ""));
+      }
+      case "value_desc": {
+        const byValue = getCardLastSoldValue(right) - getCardLastSoldValue(left);
+        if (byValue) {
+          return byValue;
+        }
+        return String(left.name || "").localeCompare(String(right.name || ""));
+      }
+      case "name_asc":
+        return String(left.name || "").localeCompare(String(right.name || ""));
+      case "name_desc":
+        return String(right.name || "").localeCompare(String(left.name || ""));
+      case "newest":
+        return (right.addedAt || 0) - (left.addedAt || 0);
+      case "qty_desc":
+      default: {
+        const byQty = rightQty - leftQty;
+        if (byQty) {
+          return byQty;
+        }
+        return String(left.name || "").localeCompare(String(right.name || ""));
+      }
+    }
+  });
+
+  const totalCopies = ownedCards.reduce(
+    (sum, card) => sum + toPositiveInt(card.ownedQty, 1),
+    0
+  );
+  el.inventoryMeta.textContent = `${ownedCards.length} cards • ${totalCopies} copies`;
+
+  if (!ownedCards.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No owned cards yet.";
+    el.inventoryList.appendChild(empty);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  for (const card of ownedCards) {
+    const item = document.createElement("article");
+    item.className = "inventory-item";
+    item.addEventListener("click", () => {
+      openCardModal(card);
+    });
+
+    const image = document.createElement("img");
+    image.loading = "lazy";
+    image.src = card.images?.small || "";
+    image.alt = `${card.name} card`;
+    item.appendChild(image);
+
+    const meta = document.createElement("div");
+    meta.className = "inventory-item-meta";
+
+    const name = document.createElement("h3");
+    name.textContent = card.name;
+    meta.appendChild(name);
+
+    const line = document.createElement("p");
+    line.textContent = `${card.set?.name || "Unknown set"} • ${card.rarity || "Unknown"}`;
+    meta.appendChild(line);
+
+    item.appendChild(meta);
+
+    const qty = document.createElement("p");
+    qty.className = "inventory-item-qty";
+    qty.textContent = `x${toPositiveInt(card.ownedQty, 1)}`;
+    item.appendChild(qty);
+
+    fragment.appendChild(item);
+  }
+
+  el.inventoryList.appendChild(fragment);
+}
+
+function initializeDeveloperCardInteraction() {
+  if (!el.developerCard || el.developerCard.dataset.bound === "true") {
+    return;
+  }
+
+  el.developerCard.dataset.bound = "true";
+  let glowTimer = null;
+
+  const updateFromPointer = (event) => {
+    const rect = el.developerCard.getBoundingClientRect();
+    const x = Math.max(0, Math.min(event.clientX - rect.left, rect.width));
+    const y = Math.max(0, Math.min(event.clientY - rect.top, rect.height));
+    const px = rect.width ? (x / rect.width) * 100 : 50;
+    const py = rect.height ? (y / rect.height) * 100 : 50;
+
+    el.developerCard.style.setProperty("--dev-x", `${px}%`);
+    el.developerCard.style.setProperty("--dev-y", `${py}%`);
+
+    const rotateY = ((px - 50) / 50) * 7;
+    const rotateX = -((py - 50) / 50) * 7;
+    el.developerCard.style.setProperty("--dev-rot-x", `${rotateX.toFixed(2)}deg`);
+    el.developerCard.style.setProperty("--dev-rot-y", `${rotateY.toFixed(2)}deg`);
+  };
+
+  el.developerCard.addEventListener("pointermove", updateFromPointer);
+  el.developerCard.addEventListener("pointerleave", () => {
+    el.developerCard.style.setProperty("--dev-x", "50%");
+    el.developerCard.style.setProperty("--dev-y", "50%");
+    el.developerCard.style.setProperty("--dev-rot-x", "0deg");
+    el.developerCard.style.setProperty("--dev-rot-y", "0deg");
+  });
+  el.developerCard.addEventListener("click", () => {
+    const willShowBack = !el.developerCard.classList.contains("is-flipped");
+    el.developerCard.classList.toggle("is-flipped");
+
+    if (glowTimer) {
+      window.clearTimeout(glowTimer);
+      glowTimer = null;
+    }
+
+    if (willShowBack) {
+      el.developerCard.classList.remove("is-glow-active");
+      return;
+    }
+
+    el.developerCard.classList.remove("is-glow-active");
+    glowTimer = window.setTimeout(() => {
+      if (!el.developerCard.classList.contains("is-flipped")) {
+        el.developerCard.classList.add("is-glow-active");
+      }
+    }, 640);
+  });
+
+  el.developerCard.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+  });
+  el.developerCard.addEventListener("dragstart", (event) => {
+    event.preventDefault();
+  });
+  el.developerCard.addEventListener("copy", (event) => {
+    event.preventDefault();
+  });
+  el.developerCard.addEventListener("cut", (event) => {
+    event.preventDefault();
+  });
+  el.developerCard.addEventListener("paste", (event) => {
+    event.preventDefault();
+  });
+}
+
+function resetDeveloperCardToBack() {
+  if (!el.developerCard) {
+    return;
+  }
+
+  el.developerCard.classList.add("is-flipped");
+  el.developerCard.classList.remove("is-glow-active");
+  el.developerCard.style.setProperty("--dev-x", "50%");
+  el.developerCard.style.setProperty("--dev-y", "50%");
+  el.developerCard.style.setProperty("--dev-rot-x", "0deg");
+  el.developerCard.style.setProperty("--dev-rot-y", "0deg");
+}
+
 function normalizePokemonKey(value) {
   return String(value || "")
     .normalize("NFD")
@@ -2959,9 +3206,22 @@ function getPokedexCoverCard(entry, ownedSpecies, ownedCardIds) {
   return entry;
 }
 
+function syncPokedexSelectedTile() {
+  if (!el.pokedexGrid) {
+    return;
+  }
+
+  const activeKey = state.pokedex.selectedSpeciesKey;
+  const items = el.pokedexGrid.querySelectorAll(".pokedex-item[data-species-key]");
+  for (const item of items) {
+    item.classList.toggle("is-selected", item.dataset.speciesKey === activeKey);
+  }
+}
+
 function closePokedexGallery() {
   state.pokedex.selectedSpeciesKey = "";
-  renderPokedex();
+  syncPokedexSelectedTile();
+  renderPokedexGallery();
 }
 
 function openPokedexGallery(speciesKey) {
@@ -2971,7 +3231,21 @@ function openPokedexGallery(speciesKey) {
 
   state.pokedex.selectedSpeciesKey =
     state.pokedex.selectedSpeciesKey === speciesKey ? "" : speciesKey;
-  renderPokedex();
+  syncPokedexSelectedTile();
+  renderPokedexGallery();
+
+  if (
+    state.pokedex.selectedSpeciesKey &&
+    el.pokedexGalleryPanel &&
+    window.matchMedia("(max-width: 959px)").matches
+  ) {
+    window.requestAnimationFrame(() => {
+      el.pokedexGalleryPanel.scrollIntoView({
+        behavior: "smooth",
+        block: "start"
+      });
+    });
+  }
 }
 
 function renderPokedexGallery() {
@@ -3197,6 +3471,7 @@ function renderPokedex() {
     const item = document.createElement("article");
     item.tabIndex = 0;
     item.setAttribute("role", "button");
+    item.dataset.speciesKey = entry.speciesKey;
     item.className = "pokedex-item";
     item.classList.toggle("is-unobtained", !owned);
     item.setAttribute("aria-label", `${entry.name} (${owned ? "owned" : "missing"})`);
@@ -5310,6 +5585,7 @@ function renderBinder() {
   renderPokedex();
   renderDashboard();
   renderAchievements();
+  renderInventory();
 }
 
 function removeBinderEntry(cardId) {
@@ -5571,6 +5847,27 @@ function attachEvents() {
     state.page = 1;
     refreshCards();
   });
+
+  if (el.inventorySearch) {
+    el.inventorySearch.addEventListener("input", (event) => {
+      state.inventory.search = String(event.target.value || "").slice(0, 50);
+      renderInventory();
+    });
+  }
+
+  if (el.inventorySort) {
+    el.inventorySort.addEventListener("change", (event) => {
+      state.inventory.sort = String(event.target.value || "qty_desc");
+      renderInventory();
+    });
+  }
+
+  if (el.inventoryRarityFilter) {
+    el.inventoryRarityFilter.addEventListener("change", (event) => {
+      state.inventory.rarity = String(event.target.value || "");
+      renderInventory();
+    });
+  }
 
   if (el.pokedexSort) {
     el.pokedexSort.addEventListener("change", (event) => {
@@ -5844,6 +6141,8 @@ async function initialize() {
   renderBinderPicker();
   renderPokedex();
   renderDashboard();
+  renderInventory();
+  initializeDeveloperCardInteraction();
 
   if (el.binderCollectionPreset) {
     el.binderCollectionPreset.value = state.binderCollection.preset;

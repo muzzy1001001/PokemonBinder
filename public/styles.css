@@ -116,6 +116,10 @@ body.modal-open {
   gap: 0.5rem;
 }
 
+.sidebar-developer-group {
+  margin-top: auto;
+}
+
 .sidebar-group-title {
   margin: 0 0 0.2rem;
   font-size: 0.7rem;
@@ -664,6 +668,298 @@ body.modal-open {
   font-weight: 800;
 }
 
+.panel-inventory {
+  display: grid;
+  gap: 0.72rem;
+}
+
+.controls-inventory {
+  grid-template-columns: minmax(180px, 1fr) minmax(160px, 220px) minmax(160px, 220px);
+}
+
+.inventory-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 0.52rem;
+}
+
+.inventory-item {
+  position: relative;
+  border: 1px solid #d8e3f2;
+  border-radius: 0.74rem;
+  background: #ffffff;
+  padding: 0.34rem;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.32rem;
+  align-content: start;
+  cursor: var(--cursor-pokeball);
+}
+
+.inventory-item img {
+  width: 100%;
+  border-radius: 0.5rem;
+  border: 1px solid #e3ebf7;
+  display: block;
+}
+
+.inventory-item-meta h3,
+.inventory-item-meta p {
+  margin: 0;
+}
+
+.inventory-item-meta h3 {
+  font-size: 0.78rem;
+  line-height: 1.2;
+}
+
+.inventory-item-meta p {
+  font-size: 0.66rem;
+  color: #58708f;
+}
+
+.inventory-item-qty {
+  margin: 0;
+  position: absolute;
+  top: 0.42rem;
+  right: 0.42rem;
+  border-radius: 999px;
+  border: 1px solid #d1def0;
+  background: #eff5ff;
+  color: #2e4c73;
+  font-size: 0.68rem;
+  font-weight: 800;
+  padding: 0.12rem 0.44rem;
+}
+
+.panel-developer {
+  display: grid;
+  gap: 0.72rem;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.developer-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 460px);
+  justify-content: center;
+  justify-items: center;
+  gap: 0.8rem;
+}
+
+.developer-card {
+  --dev-x: 50%;
+  --dev-y: 50%;
+  --dev-rot-x: 0deg;
+  --dev-rot-y: 0deg;
+  position: relative;
+  width: min(460px, 96vw);
+  max-width: 460px;
+  border: 0;
+  border-radius: 1rem;
+  background: transparent;
+  color: #ecf4ff;
+  padding: 0;
+  display: block;
+  transform: perspective(960px) rotateX(var(--dev-rot-x)) rotateY(var(--dev-rot-y));
+  transition: transform 140ms ease, box-shadow 220ms ease, border-color 220ms ease, filter 220ms ease;
+  box-shadow: none;
+  cursor: var(--cursor-pokeball);
+  overflow: hidden;
+  aspect-ratio: 2 / 3;
+  user-select: none;
+}
+
+.developer-card::before {
+  content: "";
+  position: absolute;
+  inset: -8% -36%;
+  border-radius: inherit;
+  background: linear-gradient(
+    112deg,
+    rgba(255, 255, 255, 0) 22%,
+    rgba(213, 169, 255, 0.22) 40%,
+    rgba(242, 223, 255, 0.8) 50%,
+    rgba(213, 169, 255, 0.16) 60%,
+    rgba(255, 255, 255, 0) 76%
+  );
+  transform: translateX(-64%) rotate(9deg);
+  mix-blend-mode: screen;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.developer-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(circle at var(--dev-x) var(--dev-y), rgba(255, 255, 255, 0.2), transparent 52%);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+@keyframes developer-purple-glare-pass {
+  0% {
+    transform: translateX(-64%) rotate(9deg);
+  }
+
+  100% {
+    transform: translateX(58%) rotate(9deg);
+  }
+}
+
+.developer-card.is-glow-active {
+  box-shadow:
+    0 20px 38px rgba(14, 9, 28, 0.58),
+    0 0 28px rgba(186, 132, 255, 0.38);
+}
+
+.developer-card.is-glow-active:not(.is-flipped)::before {
+  opacity: 1;
+  animation: developer-purple-glare-pass 2200ms linear infinite;
+}
+
+.developer-card.is-glow-active:not(.is-flipped)::after {
+  opacity: 1;
+}
+
+.developer-card:not(.is-flipped):hover .developer-card-inner,
+.developer-card:not(.is-flipped):focus-visible .developer-card-inner {
+  filter: blur(3.6px) brightness(0.55) saturate(0.85);
+}
+
+.developer-flip-card {
+  perspective: 1000px;
+}
+
+.developer-card-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 1rem;
+  transform-style: preserve-3d;
+  transition: transform 620ms cubic-bezier(0.17, 0.84, 0.22, 1);
+}
+
+.developer-flip-card.is-flipped .developer-card-inner {
+  transform: rotateY(180deg);
+}
+
+.developer-card-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  border-radius: 1rem;
+}
+
+.developer-card-front {
+  background: transparent;
+  display: grid;
+  place-items: center;
+}
+
+.developer-card-back {
+  background: transparent;
+  transform: rotateY(180deg);
+}
+
+.developer-card-back-art {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  user-select: none;
+  -webkit-user-drag: none;
+  pointer-events: none;
+}
+
+.developer-card-art {
+  width: 100%;
+  display: block;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+  pointer-events: none;
+}
+
+.developer-hover-details {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  align-content: center;
+  gap: 0.5rem;
+  padding: 1rem 1.02rem;
+  text-align: left;
+  color: #f3ecff;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 180ms ease, transform 180ms ease;
+  pointer-events: none;
+}
+
+.developer-card:not(.is-flipped):hover .developer-hover-details,
+.developer-card:not(.is-flipped):focus-visible .developer-hover-details {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.developer-hover-details h3,
+.developer-hover-details p {
+  margin: 0;
+  line-height: 1.24;
+}
+
+.developer-hover-details h3 {
+  font-size: 1.74rem;
+  letter-spacing: 0.01em;
+  margin-bottom: 0.3rem;
+}
+
+.developer-hover-rows {
+  display: grid;
+  gap: 0.34rem;
+}
+
+.developer-hover-row {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1.28rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 1.01rem;
+  color: #eee3ff;
+}
+
+.developer-hover-icon {
+  width: 1.28rem;
+  height: 1.28rem;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(245, 233, 255, 0.18);
+  border: 1px solid rgba(217, 188, 255, 0.42);
+  font-size: 0.78rem;
+}
+
+.developer-hover-value {
+  font-weight: 700;
+  word-break: break-word;
+}
+
+.developer-hover-support {
+  margin: 0.16rem 0 0.08rem !important;
+  font-size: 1.14rem !important;
+  font-weight: 800;
+  color: #f7eeff !important;
+  letter-spacing: 0.01em;
+}
+
 .panel-pokedex {
   display: grid;
   gap: 0.72rem;
@@ -894,7 +1190,7 @@ body.modal-open {
   grid-template-columns: minmax(0, 1fr);
 }
 
-@media (min-width: 960px) {
+@media (min-width: 820px) {
   .pokedex-layout.has-gallery {
     grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.95fr);
   }
@@ -906,6 +1202,19 @@ body.modal-open {
 
   .pokedex-gallery-grid {
     max-height: min(62vh, 620px);
+  }
+}
+
+@media (max-width: 819px) {
+  .pokedex-layout.has-gallery .pokedex-gallery-panel {
+    position: sticky;
+    top: 0.45rem;
+    z-index: 4;
+    order: -1;
+  }
+
+  .pokedex-layout.has-gallery .pokedex-gallery-grid {
+    max-height: 38vh;
   }
 }
 
@@ -2934,6 +3243,11 @@ button:disabled {
     grid-column: 1 / -1;
   }
 
+  .sidebar-developer-group {
+    grid-column: 1 / -1;
+    margin-top: 0;
+  }
+
   .binder-grid {
     max-height: none;
   }
@@ -2953,6 +3267,16 @@ button:disabled {
 
   .achievement-badge-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .developer-layout {
+    grid-template-columns: 1fr;
+    justify-content: center;
+  }
+
+  .developer-card {
+    justify-self: center;
+    width: min(460px, 100%);
   }
 
   .pokedex-grid {
@@ -2994,6 +3318,7 @@ button:disabled {
   .controls-binder-manager,
   .controls-gacha,
   .controls-pokedex,
+  .controls-inventory,
   .controls-goals {
     grid-template-columns: 1fr;
   }
