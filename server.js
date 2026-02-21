@@ -1720,13 +1720,13 @@ function gachaRarityWeight(card, { slot = "slotNine" } = {}) {
 
   if (tier === "rare") {
     if (label.includes("holo")) {
-      return premiumTierWeightByLabel(label, 0.04);
+      return premiumTierWeightByLabel(label, 0.16);
     }
-    return premiumTierWeightByLabel(label, 0.02);
+    return premiumTierWeightByLabel(label, 0.08);
   }
 
   if (tier === "ultra") {
-    return premiumTierWeightByLabel(label, 0.06);
+    return premiumTierWeightByLabel(label, 0.24);
   }
 
   if (tier === "uncommon") {
