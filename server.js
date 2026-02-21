@@ -1706,9 +1706,10 @@ function premiumTierWeightByLabel(label, baseWeight) {
     label.includes("secret") ||
     label.includes("rainbow") ||
     label.includes("gold") ||
-    label.includes("special illustration")
+    label.includes("special illustration") ||
+    label.includes("illustration")
   ) {
-    return baseWeight + 0.08;
+    return baseWeight + 0.15;
   }
 
   return baseWeight;
@@ -1720,13 +1721,13 @@ function gachaRarityWeight(card, { slot = "slotNine" } = {}) {
 
   if (tier === "rare") {
     if (label.includes("holo")) {
-      return premiumTierWeightByLabel(label, 0.16);
+      return premiumTierWeightByLabel(label, 0.32);
     }
-    return premiumTierWeightByLabel(label, 0.08);
+    return premiumTierWeightByLabel(label, 0.16);
   }
 
   if (tier === "ultra") {
-    return premiumTierWeightByLabel(label, 0.36);
+    return premiumTierWeightByLabel(label, 0.5);
   }
 
   if (tier === "uncommon") {
