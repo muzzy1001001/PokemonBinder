@@ -1708,7 +1708,7 @@ function premiumTierWeightByLabel(label, baseWeight) {
     label.includes("gold") ||
     label.includes("special illustration")
   ) {
-    return baseWeight + 0.02;
+    return baseWeight + 0.08;
   }
 
   return baseWeight;
@@ -1726,7 +1726,7 @@ function gachaRarityWeight(card, { slot = "slotNine" } = {}) {
   }
 
   if (tier === "ultra") {
-    return premiumTierWeightByLabel(label, 0.24);
+    return premiumTierWeightByLabel(label, 0.36);
   }
 
   if (tier === "uncommon") {
